@@ -1,10 +1,12 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 
 from database import engine
 import models
-from schemas import UserCreate, UserResponse, Token
-from auth import hash_password, verify_password, create_access_token, get_db
+from schemas import UserCreate, UserResponse, Token, AnalysisResponse
+from auth import hash_password, verify_password, create_access_token, get_db, get_current_user
+from file_parser import extract_text
+from ai_service import summarize_text
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -45,3 +47,28 @@ def login(user: UserCreate, db: Session = Depends(get_db)):
         )
     access_token = create_access_token(data={"sub": db_user.id})
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.post("/analyze", response_model=AnalysisResponse)
+async def analyze(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # 1. Dosyadan metin çıkar
+    text = await extract_text(file)
+
+    # 2. Gemini ile özetle
+    summary = summarize_text(text)
+
+    # 3. Veritabanına kaydet
+    analysis = models.Analysis(
+        user_id=current_user.id,
+        filename=file.filename,
+        summary=summary,
+    )
+    db.add(analysis)
+    db.commit()
+    db.refresh(analysis)
+
+    return analysis

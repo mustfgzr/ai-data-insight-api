@@ -17,3 +17,12 @@ class UserResponse(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str
+
+
+class AnalysisResponse(BaseModel):
+    id: int
+    filename: str
+    summary: str
+
+    class Config:
+        from_attributes = True

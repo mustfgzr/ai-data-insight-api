@@ -6,3 +6,8 @@ python-jose[cryptography]
 passlib[bcrypt]
 bcrypt==4.2.1
 python-multipart
+python-dotenv
+google-genai
+PyPDF2
+python-docx
+openpyxl
