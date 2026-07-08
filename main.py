@@ -1,12 +1,21 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
+import json
+
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
 
 from database import engine
 import models
-from schemas import UserCreate, UserResponse, Token, AnalysisResponse
+from schemas import (
+    UserCreate, UserResponse, Token, AnalysisResponse,
+    DataAnalysisResponse, DataAnalysisListItem,
+    CompareResponse, AskResponse,
+)
 from auth import hash_password, verify_password, create_access_token, get_db, get_current_user
 from file_parser import extract_text
 from ai_service import summarize_text
+from data_ingestor import ingest_file
+from stats_engine import analyze as stats_analyze, result_to_dict
+from ai_analyst import strategic_analysis
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -72,3 +81,64 @@ async def analyze(
     db.refresh(analysis)
 
     return analysis
+
+
+# ── FAZ 3: Veri Analiz Motoru Endpoint'leri ───────────────────
+
+@app.post("/analyze/data", response_model=DataAnalysisResponse)
+async def analyze_data(
+    file: UploadFile = File(...),
+    template: str = Form("general"),
+    question: str = Form(None),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Veri dosyasını analiz eder: istatistik çıkar + Gemini stratejik rapor."""
+    # 1. Veriyi ayrıştır
+    ingested = await ingest_file(file)
+
+    # 2. İstatistiksel analiz
+    stats_result = stats_analyze(ingested.df)
+    stats_dict = result_to_dict(stats_result)
+
+    # 3. Sütun bilgilerini JSON'a çevir
+    from dataclasses import asdict
+    columns_info_list = [asdict(c) for c in ingested.columns]
+
+    # 4. Gemini stratejik analiz
+    ai_report = strategic_analysis(
+        ingested=ingested,
+        stats=stats_result,
+        template_name=template,
+        question=question,
+    )
+
+    # 5. Veritabanına kaydet
+    db_record = models.DataAnalysis(
+        user_id=current_user.id,
+        filename=ingested.filename,
+        template=template,
+        row_count=ingested.row_count,
+        column_count=ingested.column_count,
+        columns_info=json.dumps(columns_info_list, ensure_ascii=False),
+        statistics=json.dumps(stats_dict, ensure_ascii=False),
+        ai_report=ai_report,
+        question=question,
+    )
+    db.add(db_record)
+    db.commit()
+    db.refresh(db_record)
+
+    # 6. JSON alanlarını parse ederek döndür
+    return DataAnalysisResponse(
+        id=db_record.id,
+        filename=db_record.filename,
+        template=db_record.template,
+        row_count=db_record.row_count,
+        column_count=db_record.column_count,
+        columns_info=columns_info_list,
+        statistics=stats_dict,
+        ai_report=db_record.ai_report,
+        question=db_record.question,
+        created_at=db_record.created_at,
+    )
