@@ -11,3 +11,6 @@ google-genai
 PyPDF2
 python-docx
 openpyxl
+pandas
+numpy
+scipy
