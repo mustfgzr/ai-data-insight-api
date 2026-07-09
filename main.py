@@ -15,7 +15,7 @@ from file_parser import extract_text
 from ai_service import summarize_text
 from data_ingestor import ingest_file
 from stats_engine import analyze as stats_analyze, result_to_dict
-from ai_analyst import strategic_analysis
+from ai_analyst import strategic_analysis, compare_datasets, ask_about_data
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -141,4 +141,101 @@ async def analyze_data(
         ai_report=db_record.ai_report,
         question=db_record.question,
         created_at=db_record.created_at,
+    )
+
+
+@app.post("/analyze/compare", response_model=CompareResponse)
+async def analyze_compare(
+    file1: UploadFile = File(...),
+    file2: UploadFile = File(...),
+    question: str = Form(None),
+    current_user: models.User = Depends(get_current_user),
+):
+    """İki veri setini karşılaştırır ve Gemini ile stratejik analiz üretir."""
+    ingested1 = await ingest_file(file1)
+    ingested2 = await ingest_file(file2)
+
+    stats1 = stats_analyze(ingested1.df)
+    stats2 = stats_analyze(ingested2.df)
+
+    ai_report = compare_datasets(
+        ingested1=ingested1, stats1=stats1,
+        ingested2=ingested2, stats2=stats2,
+        question=question,
+    )
+
+    return CompareResponse(
+        file1=ingested1.filename,
+        file2=ingested2.filename,
+        ai_report=ai_report,
+    )
+
+
+@app.post("/analyze/ask", response_model=AskResponse)
+async def analyze_ask(
+    file: UploadFile = File(...),
+    question: str = Form(...),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Veri seti hakkında doğal dilde soru sorar, Gemini yanıtlar."""
+    ingested = await ingest_file(file)
+    stats_result = stats_analyze(ingested.df)
+
+    answer = ask_about_data(
+        ingested=ingested,
+        stats=stats_result,
+        question=question,
+    )
+
+    return AskResponse(
+        filename=ingested.filename,
+        question=question,
+        answer=answer,
+    )
+
+
+@app.get("/analyses", response_model=list[DataAnalysisListItem])
+def list_analyses(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Kullanıcının geçmiş veri analizlerini listeler."""
+    records = (
+        db.query(models.DataAnalysis)
+        .filter(models.DataAnalysis.user_id == current_user.id)
+        .order_by(models.DataAnalysis.created_at.desc())
+        .all()
+    )
+    return records
+
+
+@app.get("/analyses/{analysis_id}", response_model=DataAnalysisResponse)
+def get_analysis(
+    analysis_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Belirli bir veri analizinin detayını getirir."""
+    record = (
+        db.query(models.DataAnalysis)
+        .filter(
+            models.DataAnalysis.id == analysis_id,
+            models.DataAnalysis.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="Analiz bulunamadı")
+
+    return DataAnalysisResponse(
+        id=record.id,
+        filename=record.filename,
+        template=record.template,
+        row_count=record.row_count,
+        column_count=record.column_count,
+        columns_info=json.loads(record.columns_info) if record.columns_info else [],
+        statistics=json.loads(record.statistics) if record.statistics else {},
+        ai_report=record.ai_report or "",
+        question=record.question,
+        created_at=record.created_at,
     )
