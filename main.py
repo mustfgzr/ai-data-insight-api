@@ -1,4 +1,5 @@
 import json
+import os
 
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
@@ -9,6 +10,7 @@ from schemas import (
     UserCreate, UserResponse, Token, AnalysisResponse,
     DataAnalysisResponse, DataAnalysisListItem,
     CompareResponse, AskResponse,
+    SurveyUploadResponse, SurveyListItem, SurveyDetailResponse,
 )
 from auth import hash_password, verify_password, create_access_token, get_db, get_current_user
 from file_parser import extract_text
@@ -16,8 +18,11 @@ from ai_service import summarize_text
 from data_ingestor import ingest_file
 from stats_engine import analyze as stats_analyze, result_to_dict
 from ai_analyst import strategic_analysis, compare_datasets, ask_about_data
+from survey_ingestor import parse_survey_upload
+from survey_storage import get_survey_detail, save_parsed_survey
 
-models.Base.metadata.create_all(bind=engine)
+if os.getenv("AUTO_CREATE_TABLES", "1") == "1":
+    models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
@@ -239,3 +244,48 @@ def get_analysis(
         question=record.question,
         created_at=record.created_at,
     )
+
+
+@app.post("/surveys/upload", response_model=SurveyUploadResponse, status_code=status.HTTP_201_CREATED)
+async def upload_survey(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Anket CSV/Excel dosyasını okur, metadata/soru/cevap/rapor kayıtlarını oluşturur."""
+    try:
+        parsed = await parse_survey_upload(file)
+        return save_parsed_survey(db, current_user.id, parsed)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Anket dosyası işlenirken hata oluştu: {exc}")
+
+
+@app.get("/surveys", response_model=list[SurveyListItem])
+def list_surveys(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Kullanıcının yüklediği anketleri listeler."""
+    return (
+        db.query(models.Survey)
+        .filter(models.Survey.user_id == current_user.id)
+        .order_by(models.Survey.created_at.desc())
+        .all()
+    )
+
+
+@app.get("/surveys/{survey_id}", response_model=SurveyDetailResponse)
+def get_survey(
+    survey_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Anketin dataset, kolon, soru ve rapor özetini getirir."""
+    detail = get_survey_detail(db, current_user.id, survey_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Anket bulunamadı")
+    return detail

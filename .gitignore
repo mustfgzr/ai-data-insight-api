@@ -6,6 +6,8 @@ venv/
 
 # SQLite database
 app.db
+test_app.db
+test_migration.db
 
 # Python cache
 __pycache__/

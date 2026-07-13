@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class UserCreate(BaseModel):
@@ -72,3 +72,87 @@ class AskResponse(BaseModel):
     filename: str
     question: str
     answer: str
+
+
+class SurveyColumnMetadata(BaseModel):
+    name: str
+    dtype: str
+    semantic_type: str
+    missing_count: int
+    missing_pct: float
+    unique_count: int
+    sample_values: list[Any] = Field(default_factory=list)
+    code_map: dict[str, Any] = Field(default_factory=dict)
+
+
+class SurveyQuestionItem(BaseModel):
+    id: Optional[int] = None
+    column_name: str
+    question_no: Optional[str] = None
+    question_text: str
+    question_type: str
+    scale_type: Optional[str] = None
+    options: dict[str, Any] = Field(default_factory=dict)
+    is_likert: bool = False
+    is_demographic: bool = False
+    is_open_text: bool = False
+
+
+class SurveyReportItem(BaseModel):
+    id: Optional[int] = None
+    report_type: str
+    status: str
+    summary: Any
+    metrics: Any
+    quality_issues: Any
+    ai_report: str
+    created_at: Optional[datetime] = None
+
+
+class SurveyUploadResponse(BaseModel):
+    dataset_id: int
+    survey_id: int
+    filename: str
+    title: str
+    source_sheet: str
+    row_count: int
+    column_count: int
+    header_row: int
+    data_start_row: int
+    columns: list[SurveyColumnMetadata]
+    questions: list[SurveyQuestionItem]
+    report: SurveyReportItem
+    created_at: Optional[datetime] = None
+
+
+class SurveyListItem(BaseModel):
+    id: int
+    dataset_id: int
+    title: str
+    department: Optional[str] = None
+    period: Optional[str] = None
+    quarter: Optional[str] = None
+    year: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SurveyDetailResponse(BaseModel):
+    id: int
+    dataset_id: int
+    title: str
+    department: Optional[str] = None
+    period: Optional[str] = None
+    quarter: Optional[str] = None
+    year: Optional[int] = None
+    source_sheet: str
+    header_row: int
+    data_start_row: int
+    row_count: int
+    column_count: int
+    columns: list[SurveyColumnMetadata]
+    questions: list[SurveyQuestionItem]
+    report: Optional[SurveyReportItem] = None
+    created_at: Optional[datetime] = None
