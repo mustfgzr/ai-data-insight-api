@@ -201,6 +201,33 @@ class DatasetRowsResponse(BaseModel):
     rows: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ReportCreate(BaseModel):
+    analysis_ids: list[int] = Field(min_length=1, max_length=5)
+    title: Optional[str] = Field(default=None, max_length=160)
+    question: Optional[str] = Field(default=None, max_length=2_000)
+
+    @field_validator("analysis_ids")
+    @classmethod
+    def analysis_ids_are_unique(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("Aynı analiz bir rapora birden fazla eklenemez")
+        return value
+
+
+class ReportListItem(BaseModel):
+    id: int
+    title: str
+    status: str
+    analysis_ids: list[int] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+
+
+class ReportDetailResponse(ReportListItem):
+    content: Optional[str] = None
+    error_message: Optional[str] = None
+    model_name: Optional[str] = None
+
+
 class SurveyListItem(BaseModel):
     id: int
     dataset_id: int

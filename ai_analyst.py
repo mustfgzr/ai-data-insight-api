@@ -25,6 +25,54 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 MODEL = "gemini-3.1-flash-lite"
 
 
+def generate_report_from_analyses(
+    analyses: list[object],
+    question: str | None = None,
+) -> tuple[str, str]:
+    """Kayıtlı analizlerin yalnızca yapılandırılmış özetleriyle Gemini raporu üretir."""
+    snapshots = []
+    for analysis in analyses:
+        statistics = _loads_json(getattr(analysis, "statistics", None), {})
+        quality_issues = _loads_json(getattr(analysis, "quality_issues", None), [])
+        if not isinstance(statistics, dict):
+            statistics = {}
+        if not isinstance(quality_issues, list):
+            quality_issues = []
+        snapshots.append(
+            {
+                "analysis_id": getattr(analysis, "id"),
+                "filename": getattr(analysis, "filename"),
+                "analysis_type": getattr(analysis, "analysis_type", None),
+                "row_count": getattr(analysis, "row_count", None),
+                "column_count": getattr(analysis, "column_count", None),
+                "summary": getattr(analysis, "summary", None),
+                "descriptive": statistics.get("descriptive", [])[:20],
+                "strong_correlations": statistics.get("strong_correlations", [])[:20],
+                "category_distributions": statistics.get("category_distributions", [])[:20],
+                "missing_summary": statistics.get("missing_summary", {}),
+                "survey_summary": statistics.get("summary", {}),
+                "survey_metrics": statistics.get("metrics", {}).get("question_metrics", [])[:30],
+                "quality_issues": quality_issues[:20],
+            }
+        )
+
+    prompt = f"""Sen kıdemli bir veri analistisin. Aşağıdaki yapılandırılmış analiz özetlerini kullanarak Türkçe, açıklayıcı ve veriye dayalı bir rapor hazırla.
+
+Kurallar:
+- Ham satır verisi verilmemiştir; yalnızca sağlanan istatistiklere dayan.
+- Kesin olmayan çıkarımları açıkça ihtiyatlı biçimde belirt.
+- Raporu şu başlıklarla yaz: Genel Özet, Önemli Bulgular, Veri Kalitesi, Karşılaştırma, Öneriler.
+
+ANALİZ ÖZETLERİ:
+{json.dumps(snapshots, ensure_ascii=False, default=str)}"""
+
+    if question:
+        prompt += f"\n\nKULLANICININ ODAK SORUSU:\n{question}"
+
+    response = client.models.generate_content(model=MODEL, contents=prompt)
+    return prompt, response.text.strip()
+
+
 def strategic_analysis(
     ingested: IngestedData,
     stats: StatisticsResult,
@@ -188,3 +236,12 @@ Yanıtını şu şekilde yapılandır:
 
     response = client.models.generate_content(model=MODEL, contents=prompt)
     return response.text.strip()
+
+
+def _loads_json(value: str | None, default: object) -> object:
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return default

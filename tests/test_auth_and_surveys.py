@@ -223,6 +223,94 @@ def test_dataset_and_analysis_history_are_paginated_and_user_scoped():
     assert client.get(f"/analyses/{uploaded['analysis_id']}", headers=other_headers).status_code == 404
 
 
+def test_reports_are_created_from_owned_analyses_and_persisted(monkeypatch):
+    headers = _auth_headers("report-owner@example.com")
+
+    def upload(filename: str, content: bytes) -> dict:
+        response = client.post(
+            "/datasets/upload",
+            headers=headers,
+            files={"file": (filename, content, "text/csv")},
+        )
+        assert response.status_code == 201
+        return response.json()
+
+    first = upload("report-one.csv", b"id,score\n1,10\n2,20\n")
+    second = upload("report-two.csv", b"id,score\n1,15\n2,30\n")
+
+    def fake_report_generator(analyses, question):
+        assert [analysis.id for analysis in analyses] == [first["analysis_id"], second["analysis_id"]]
+        assert question == "Skor farklarini acikla"
+        return "structured prompt", "Olusturulan test raporu"
+
+    monkeypatch.setattr("report_service.generate_report_from_analyses", fake_report_generator)
+    created = client.post(
+        "/reports",
+        headers=headers,
+        json={
+            "analysis_ids": [first["analysis_id"], second["analysis_id"]],
+            "title": "Karsilastirma raporu",
+            "question": "Skor farklarini acikla",
+        },
+    )
+
+    assert created.status_code == 201
+    report = created.json()
+    assert report["title"] == "Karsilastirma raporu"
+    assert report["status"] == "completed"
+    assert report["analysis_ids"] == [first["analysis_id"], second["analysis_id"]]
+    assert report["content"] == "Olusturulan test raporu"
+
+    reports = client.get("/reports", headers=headers)
+    assert reports.status_code == 200
+    assert any(item["id"] == report["id"] for item in reports.json())
+
+    detail = client.get(f"/reports/{report['id']}", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["model_name"]
+
+    duplicate_selection = client.post(
+        "/reports",
+        headers=headers,
+        json={"analysis_ids": [first["analysis_id"], first["analysis_id"]]},
+    )
+    assert duplicate_selection.status_code == 422
+
+    other_headers = _auth_headers("report-other@example.com")
+    assert client.get(f"/reports/{report['id']}", headers=other_headers).status_code == 404
+    forbidden_analysis = client.post(
+        "/reports",
+        headers=other_headers,
+        json={"analysis_ids": [first["analysis_id"]]},
+    )
+    assert forbidden_analysis.status_code == 404
+
+
+def test_report_generation_failure_is_saved(monkeypatch):
+    headers = _auth_headers("report-failure@example.com")
+    upload = client.post(
+        "/datasets/upload",
+        headers=headers,
+        files={"file": ("failure.csv", b"id,score\n1,10\n2,20\n", "text/csv")},
+    )
+    assert upload.status_code == 201
+
+    def failing_report_generator(*_args, **_kwargs):
+        raise RuntimeError("Gemini unavailable")
+
+    monkeypatch.setattr("report_service.generate_report_from_analyses", failing_report_generator)
+    response = client.post(
+        "/reports",
+        headers=headers,
+        json={"analysis_ids": [upload.json()["analysis_id"]]},
+    )
+    assert response.status_code == 502
+
+    reports = client.get("/reports", headers=headers)
+    assert reports.status_code == 200
+    assert reports.json()[0]["status"] == "failed"
+
+
 def test_upload_dataset_detects_survey_and_returns_survey_summary():
     headers = _auth_headers("unified-survey@example.com")
     csv_content = "\n".join(

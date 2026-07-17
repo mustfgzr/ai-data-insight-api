@@ -14,6 +14,7 @@ from schemas import (
     DataAnalysisResponse, DataAnalysisListItem,
     CompareResponse, AskResponse,
     DatasetDetailResponse, DatasetListResponse, DatasetRowsResponse, DatasetUploadResponse,
+    ReportCreate, ReportDetailResponse, ReportListItem,
     SurveyUploadResponse, SurveyListItem, SurveyDetailResponse,
 )
 from auth import (
@@ -40,6 +41,7 @@ from dataset_query_service import (
     list_analyses as list_analysis_history,
     list_datasets as list_dataset_history,
 )
+from report_service import create_report as create_saved_report, get_report_detail, list_reports as list_saved_reports
 
 if os.getenv("AUTO_CREATE_TABLES", "0") == "1":
     models.Base.metadata.create_all(bind=engine)
@@ -368,6 +370,41 @@ def download_dataset_source(
         media_type=source_file.content_type or "application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )
+
+
+@app.post("/reports", response_model=ReportDetailResponse, status_code=status.HTTP_201_CREATED)
+def create_report(
+    request: ReportCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        return create_saved_report(db, current_user.id, request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Rapor kaydedilirken hata oluştu") from exc
+
+
+@app.get("/reports", response_model=list[ReportListItem])
+def list_reports(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return list_saved_reports(db, current_user.id)
+
+
+@app.get("/reports/{report_id}", response_model=ReportDetailResponse)
+def get_report(
+    report_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    report = get_report_detail(db, current_user.id, report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Rapor bulunamadı")
+    return report
 
 
 @app.get("/surveys", response_model=list[SurveyListItem])
