@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
-import { Download, FilePlus2, FileText, LoaderCircle, Plus, RefreshCw, Sparkles, UploadCloud } from "lucide-react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
+import { Download, FilePlus2, FileText, LoaderCircle, Plus, Sparkles, UploadCloud } from "lucide-react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { api, ApiError } from "./api";
+import { api } from "./api";
 import { useAuth } from "./auth";
 import { EmptyState, ErrorNotice, MiniBarChart, PageHeader, StatusPill } from "./components";
 import type { AnalysisDetail, AnalysisListItem, DatasetDetail, DatasetListItem, DatasetRows, DatasetUpload, ReportDetail, ReportListItem } from "./types";
