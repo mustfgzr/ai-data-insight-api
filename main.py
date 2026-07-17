@@ -1,7 +1,8 @@
 import json
 import os
+from urllib.parse import quote
 
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form, Query
+from fastapi import FastAPI, Depends, HTTPException, Response, status, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -12,7 +13,8 @@ from schemas import (
     UserCreate, UserLogin, UserResponse, Token, AnalysisResponse,
     DataAnalysisResponse, DataAnalysisListItem,
     CompareResponse, AskResponse,
-    DatasetUploadResponse, SurveyUploadResponse, SurveyListItem, SurveyDetailResponse,
+    DatasetDetailResponse, DatasetListResponse, DatasetRowsResponse, DatasetUploadResponse,
+    SurveyUploadResponse, SurveyListItem, SurveyDetailResponse,
 )
 from auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -30,6 +32,14 @@ from ai_analyst import strategic_analysis, compare_datasets, ask_about_data
 from survey_ingestor import parse_survey_upload
 from survey_storage import get_survey_detail, save_parsed_survey
 from dataset_service import upload_dataset as process_dataset_upload
+from dataset_query_service import (
+    get_analysis_detail,
+    get_dataset_detail,
+    get_dataset_file,
+    get_dataset_rows,
+    list_analyses as list_analysis_history,
+    list_datasets as list_dataset_history,
+)
 
 if os.getenv("AUTO_CREATE_TABLES", "0") == "1":
     models.Base.metadata.create_all(bind=engine)
@@ -247,13 +257,7 @@ def list_analyses(
     db: Session = Depends(get_db),
 ):
     """Kullanıcının geçmiş veri analizlerini listeler."""
-    records = (
-        db.query(models.DataAnalysis)
-        .filter(models.DataAnalysis.user_id == current_user.id)
-        .order_by(models.DataAnalysis.created_at.desc())
-        .all()
-    )
-    return records
+    return list_analysis_history(db, current_user.id)
 
 
 @app.get("/analyses/{analysis_id}", response_model=DataAnalysisResponse)
@@ -263,29 +267,10 @@ def get_analysis(
     db: Session = Depends(get_db),
 ):
     """Belirli bir veri analizinin detayını getirir."""
-    record = (
-        db.query(models.DataAnalysis)
-        .filter(
-            models.DataAnalysis.id == analysis_id,
-            models.DataAnalysis.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not record:
+    detail = get_analysis_detail(db, current_user.id, analysis_id)
+    if detail is None:
         raise HTTPException(status_code=404, detail="Analiz bulunamadı")
-
-    return DataAnalysisResponse(
-        id=record.id,
-        filename=record.filename,
-        template=record.template,
-        row_count=record.row_count,
-        column_count=record.column_count,
-        columns_info=json.loads(record.columns_info) if record.columns_info else [],
-        statistics=json.loads(record.statistics) if record.statistics else {},
-        ai_report=record.ai_report or "",
-        question=record.question,
-        created_at=record.created_at,
-    )
+    return detail
 
 
 @app.post("/surveys/upload", response_model=SurveyUploadResponse, status_code=status.HTTP_201_CREATED)
@@ -328,6 +313,61 @@ async def upload_dataset(
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Dataset dosyası işlenirken hata oluştu: {exc}")
+
+
+@app.get("/datasets", response_model=DatasetListResponse)
+def list_datasets(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return list_dataset_history(db, current_user.id, offset, limit)
+
+
+@app.get("/datasets/{dataset_id}", response_model=DatasetDetailResponse)
+def get_dataset(
+    dataset_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    detail = get_dataset_detail(db, current_user.id, dataset_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Dataset bulunamadı")
+    return detail
+
+
+@app.get("/datasets/{dataset_id}/rows", response_model=DatasetRowsResponse)
+def get_dataset_row_page(
+    dataset_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    page = get_dataset_rows(db, current_user.id, dataset_id, offset, limit)
+    if page is None:
+        raise HTTPException(status_code=404, detail="Dataset bulunamadı")
+    return page
+
+
+@app.get("/datasets/{dataset_id}/download")
+def download_dataset_source(
+    dataset_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    detail = get_dataset_detail(db, current_user.id, dataset_id)
+    source_file = get_dataset_file(db, current_user.id, dataset_id)
+    if detail is None or source_file is None:
+        raise HTTPException(status_code=404, detail="Kaynak dosya bulunamadı")
+
+    filename = quote(detail.original_filename)
+    return Response(
+        content=source_file.content,
+        media_type=source_file.content_type or "application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
 
 
 @app.get("/surveys", response_model=list[SurveyListItem])

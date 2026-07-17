@@ -176,6 +176,53 @@ def test_upload_general_xlsx_dataset():
     assert body["column_count"] == 2
 
 
+def test_dataset_and_analysis_history_are_paginated_and_user_scoped():
+    headers = _auth_headers("dataset-history@example.com")
+    csv_content = b"id,city,score\n1,Ankara,10\n2,Izmir,20\n3,Bursa,30\n"
+    upload = client.post(
+        "/datasets/upload",
+        headers=headers,
+        files={"file": ("history.csv", csv_content, "text/csv")},
+    )
+    assert upload.status_code == 201
+    uploaded = upload.json()
+
+    datasets = client.get("/datasets?offset=0&limit=20", headers=headers)
+    assert datasets.status_code == 200
+    dataset_list = datasets.json()
+    assert dataset_list["total"] >= 1
+    assert any(item["id"] == uploaded["dataset_id"] for item in dataset_list["items"])
+
+    detail = client.get(f"/datasets/{uploaded['dataset_id']}", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["latest_analysis_id"] == uploaded["analysis_id"]
+    assert detail.json()["has_source_file"] is True
+    assert len(detail.json()["preview_rows"]) == 3
+
+    rows = client.get(f"/datasets/{uploaded['dataset_id']}/rows?offset=1&limit=1", headers=headers)
+    assert rows.status_code == 200
+    assert rows.json()["total"] == 3
+    assert rows.json()["rows"] == [{"id": 2, "city": "Izmir", "score": 20}]
+
+    downloaded = client.get(f"/datasets/{uploaded['dataset_id']}/download", headers=headers)
+    assert downloaded.status_code == 200
+    assert downloaded.content == csv_content
+    assert "attachment" in downloaded.headers["content-disposition"]
+
+    analyses = client.get("/analyses", headers=headers)
+    assert analyses.status_code == 200
+    assert any(item["id"] == uploaded["analysis_id"] for item in analyses.json())
+
+    analysis = client.get(f"/analyses/{uploaded['analysis_id']}", headers=headers)
+    assert analysis.status_code == 200
+    assert analysis.json()["dataset_id"] == uploaded["dataset_id"]
+    assert analysis.json()["chart_data"]
+
+    other_headers = _auth_headers("dataset-history-other@example.com")
+    assert client.get(f"/datasets/{uploaded['dataset_id']}", headers=other_headers).status_code == 404
+    assert client.get(f"/analyses/{uploaded['analysis_id']}", headers=other_headers).status_code == 404
+
+
 def test_upload_dataset_detects_survey_and_returns_survey_summary():
     headers = _auth_headers("unified-survey@example.com")
     csv_content = "\n".join(

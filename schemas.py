@@ -76,6 +76,10 @@ class DataAnalysisListItem(BaseModel):
     template: str
     row_count: int
     column_count: int
+    dataset_id: Optional[int] = None
+    analysis_type: Optional[str] = None
+    status: Optional[str] = None
+    summary: Optional[str] = None
     question: Optional[str] = None
     created_at: Optional[datetime] = None
 
@@ -159,6 +163,42 @@ class DatasetUploadResponse(BaseModel):
     quality_issues: list[dict[str, Any]] = Field(default_factory=list)
     summary: str
     survey: Optional[SurveyUploadResponse] = None
+
+
+class DatasetListItem(BaseModel):
+    id: int
+    filename: str
+    original_filename: str
+    file_type: str
+    detected_format: str
+    row_count: int
+    column_count: int
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DatasetDetailResponse(DatasetListItem):
+    columns: list[SurveyColumnMetadata]
+    preview_rows: list[dict[str, Any]] = Field(default_factory=list)
+    survey_id: Optional[int] = None
+    latest_analysis_id: Optional[int] = None
+    has_source_file: bool = False
+
+
+class DatasetListResponse(BaseModel):
+    offset: int
+    limit: int
+    total: int
+    items: list[DatasetListItem] = Field(default_factory=list)
+
+
+class DatasetRowsResponse(BaseModel):
+    dataset_id: int
+    offset: int
+    limit: int
+    total: int
+    rows: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SurveyListItem(BaseModel):
