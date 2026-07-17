@@ -46,19 +46,67 @@ def _auth_headers(email: str = "survey@example.com") -> dict[str, str]:
 
 def test_register_rejects_duplicate_email():
     email = "duplicate@example.com"
-    response = client.post("/register", json={"email": email, "password": "secret"})
+    response = client.post("/register", json={"email": email, "password": "secret-123"})
     assert response.status_code == 201
 
-    duplicate = client.post("/register", json={"email": email, "password": "secret"})
+    duplicate = client.post("/register", json={"email": email, "password": "secret-123"})
     assert duplicate.status_code == 400
 
 
 def test_login_rejects_wrong_password():
     email = "wrong-password@example.com"
-    client.post("/register", json={"email": email, "password": "correct"})
+    client.post("/register", json={"email": email, "password": "correct-123"})
 
-    response = client.post("/login", json={"email": email, "password": "wrong"})
+    response = client.post("/login", json={"email": email, "password": "wrong-123"})
     assert response.status_code == 401
+
+
+def test_auth_normalizes_email_and_returns_current_user():
+    email = "normalization@example.com"
+    response = client.post(
+        "/register",
+        json={"email": "  NORMALIZATION@EXAMPLE.COM ", "password": "strong-password"},
+    )
+    assert response.status_code == 201
+    assert response.json()["email"] == email
+
+    login = client.post("/login", json={"email": email, "password": "strong-password"})
+    assert login.status_code == 200
+    assert login.json()["expires_in"] == 1800
+
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    current_user = client.get("/users/me", headers=headers)
+    assert current_user.status_code == 200
+    assert current_user.json()["email"] == email
+
+
+def test_auth_rejects_invalid_credentials_and_missing_token():
+    invalid_email = client.post(
+        "/register",
+        json={"email": "invalid-email", "password": "strong-password"},
+    )
+    assert invalid_email.status_code == 422
+
+    short_password = client.post(
+        "/register",
+        json={"email": "short-password@example.com", "password": "short"},
+    )
+    assert short_password.status_code == 422
+
+    current_user = client.get("/users/me")
+    assert current_user.status_code == 401
+
+
+def test_cors_allows_local_vite_application():
+    response = client.options(
+        "/login",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
 
 
 def test_upload_survey_csv_returns_dataset_questions_quality_and_summary():

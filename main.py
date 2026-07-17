@@ -2,17 +2,26 @@ import json
 import os
 
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form, Query
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import engine
 import models
 from schemas import (
-    UserCreate, UserResponse, Token, AnalysisResponse,
+    UserCreate, UserLogin, UserResponse, Token, AnalysisResponse,
     DataAnalysisResponse, DataAnalysisListItem,
     CompareResponse, AskResponse,
     SurveyUploadResponse, SurveyListItem, SurveyDetailResponse,
 )
-from auth import hash_password, verify_password, create_access_token, get_db, get_current_user
+from auth import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    create_access_token,
+    get_current_user,
+    get_db,
+    hash_password,
+    verify_password,
+)
 from file_parser import extract_text
 from ai_service import summarize_text
 from data_ingestor import ingest_file
@@ -25,6 +34,22 @@ if os.getenv("AUTO_CREATE_TABLES", "0") == "1":
     models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/")
@@ -46,13 +71,20 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
         hashed_password=hash_password(user.password),
     )
     db.add(db_user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bu e-posta adresi zaten kayıtlı",
+        )
     db.refresh(db_user)
     return db_user
 
 
 @app.post("/login", response_model=Token)
-def login(user: UserCreate, db: Session = Depends(get_db)):
+def login(user: UserLogin, db: Session = Depends(get_db)):
     db_user = db.query(models.User).filter(models.User.email == user.email).first()
     if not db_user or not verify_password(user.password, db_user.hashed_password):
         raise HTTPException(
@@ -60,7 +92,16 @@ def login(user: UserCreate, db: Session = Depends(get_db)):
             detail="E-posta veya şifre hatalı",
         )
     access_token = create_access_token(data={"sub": str(db_user.id)})
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    }
+
+
+@app.get("/users/me", response_model=UserResponse)
+def get_me(current_user: models.User = Depends(get_current_user)):
+    return current_user
 
 
 @app.post("/analyze", response_model=AnalysisResponse)

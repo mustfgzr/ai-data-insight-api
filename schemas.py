@@ -1,25 +1,42 @@
 from datetime import datetime
+import re
 from typing import Any, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class UserCreate(BaseModel):
-    email: str
-    password: str
+class UserCredentials(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        email = value.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise ValueError("Geçerli bir e-posta adresi girin")
+        return email
+
+
+class UserCreate(UserCredentials):
+    pass
+
+
+class UserLogin(UserCredentials):
+    pass
 
 
 class UserResponse(BaseModel):
     id: int
     email: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class Token(BaseModel):
     access_token: str
     token_type: str
+    expires_in: int
 
 
 class AnalysisResponse(BaseModel):
@@ -27,8 +44,7 @@ class AnalysisResponse(BaseModel):
     filename: str
     summary: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── FAZ 3: Veri Analiz Motoru Response Modelleri ──────────────
@@ -45,8 +61,7 @@ class DataAnalysisResponse(BaseModel):
     question: Optional[str] = None
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DataAnalysisListItem(BaseModel):
@@ -58,8 +73,7 @@ class DataAnalysisListItem(BaseModel):
     question: Optional[str] = None
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CompareResponse(BaseModel):
@@ -135,8 +149,7 @@ class SurveyListItem(BaseModel):
     year: Optional[int] = None
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SurveyDetailResponse(BaseModel):
