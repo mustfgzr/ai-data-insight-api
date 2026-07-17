@@ -12,7 +12,7 @@ from schemas import (
     UserCreate, UserLogin, UserResponse, Token, AnalysisResponse,
     DataAnalysisResponse, DataAnalysisListItem,
     CompareResponse, AskResponse,
-    SurveyUploadResponse, SurveyListItem, SurveyDetailResponse,
+    DatasetUploadResponse, SurveyUploadResponse, SurveyListItem, SurveyDetailResponse,
 )
 from auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -29,6 +29,7 @@ from stats_engine import analyze as stats_analyze, result_to_dict
 from ai_analyst import strategic_analysis, compare_datasets, ask_about_data
 from survey_ingestor import parse_survey_upload
 from survey_storage import get_survey_detail, save_parsed_survey
+from dataset_service import upload_dataset as process_dataset_upload
 
 if os.getenv("AUTO_CREATE_TABLES", "0") == "1":
     models.Base.metadata.create_all(bind=engine)
@@ -295,14 +296,38 @@ async def upload_survey(
 ):
     """Anket CSV/Excel dosyasını okur, metadata/soru/cevap/rapor kayıtlarını oluşturur."""
     try:
-        parsed = await parse_survey_upload(file)
-        return save_parsed_survey(db, current_user.id, parsed)
+        content = await file.read()
+        parsed = await parse_survey_upload(file, content=content)
+        return save_parsed_survey(
+            db,
+            current_user.id,
+            parsed,
+            source_content=content,
+            content_type=file.content_type,
+        )
     except HTTPException:
         db.rollback()
         raise
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Anket dosyası işlenirken hata oluştu: {exc}")
+
+
+@app.post("/datasets/upload", response_model=DatasetUploadResponse, status_code=status.HTTP_201_CREATED)
+async def upload_dataset(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """CSV/XLSX dosyasını survey veya genel dataset olarak işler ve kaydeder."""
+    try:
+        return await process_dataset_upload(db, current_user.id, file)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Dataset dosyası işlenirken hata oluştu: {exc}")
 
 
 @app.get("/surveys", response_model=list[SurveyListItem])

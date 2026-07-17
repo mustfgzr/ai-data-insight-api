@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 import models
+from analysis_utils import build_survey_chart_data
 from schemas import (
     SurveyColumnMetadata,
     SurveyDetailResponse,
@@ -17,7 +19,13 @@ from schemas import (
 from survey_ingestor import ParsedSurvey
 
 
-def save_parsed_survey(db: Session, user_id: int, parsed: ParsedSurvey) -> SurveyUploadResponse:
+def save_parsed_survey(
+    db: Session,
+    user_id: int,
+    parsed: ParsedSurvey,
+    source_content: bytes | None = None,
+    content_type: str | None = None,
+) -> SurveyUploadResponse:
     dataset = models.Dataset(
         user_id=user_id,
         filename=parsed.filename,
@@ -29,6 +37,17 @@ def save_parsed_survey(db: Session, user_id: int, parsed: ParsedSurvey) -> Surve
     )
     db.add(dataset)
     db.flush()
+
+    if source_content is not None:
+        db.add(
+            models.DatasetFile(
+                dataset_id=dataset.id,
+                content_type=content_type,
+                size_bytes=len(source_content),
+                checksum=hashlib.sha256(source_content).hexdigest(),
+                content=source_content,
+            )
+        )
 
     dataset_columns: dict[str, models.DatasetColumn] = {}
     for column in parsed.columns:
@@ -129,6 +148,44 @@ def save_parsed_survey(db: Session, user_id: int, parsed: ParsedSurvey) -> Surve
         ai_report=parsed.report.report_text,
     )
     db.add(report)
+
+    db.add(
+        models.DataAnalysis(
+            user_id=user_id,
+            dataset_id=dataset.id,
+            filename=parsed.filename,
+            template="survey",
+            analysis_type="survey",
+            status="completed",
+            row_count=parsed.row_count,
+            column_count=parsed.column_count,
+            columns_info=_dumps(
+                [
+                    {
+                        "name": column.name,
+                        "dtype": column.dtype,
+                        "semantic_type": column.semantic_type,
+                        "missing_count": column.missing_count,
+                        "missing_pct": column.missing_pct,
+                        "unique_count": column.unique_count,
+                        "sample_values": column.sample_values,
+                        "code_map": column.code_map,
+                    }
+                    for column in parsed.columns
+                ]
+            ),
+            statistics=_dumps(
+                {
+                    "summary": parsed.report.summary,
+                    "metrics": parsed.report.metrics,
+                }
+            ),
+            chart_data=_dumps(build_survey_chart_data(parsed.report.metrics)),
+            quality_issues=_dumps(parsed.report.quality_issues),
+            summary=parsed.report.report_text,
+            ai_report="",
+        )
+    )
     db.commit()
     db.refresh(dataset)
     db.refresh(survey)

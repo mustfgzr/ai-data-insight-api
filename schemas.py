@@ -58,6 +58,12 @@ class DataAnalysisResponse(BaseModel):
     columns_info: Any       # JSON parse edilmiş sütun bilgileri
     statistics: Any          # JSON parse edilmiş istatistikler
     ai_report: str           # Gemini stratejik rapor
+    dataset_id: Optional[int] = None
+    analysis_type: str = "dataset"
+    status: str = "completed"
+    chart_data: list[dict[str, Any]] = Field(default_factory=list)
+    quality_issues: list[dict[str, Any]] = Field(default_factory=list)
+    summary: str = ""
     question: Optional[str] = None
     created_at: Optional[datetime] = None
 
@@ -137,6 +143,22 @@ class SurveyUploadResponse(BaseModel):
     questions: list[SurveyQuestionItem]
     report: SurveyReportItem
     created_at: Optional[datetime] = None
+
+
+class DatasetUploadResponse(BaseModel):
+    dataset_id: int
+    analysis_id: int
+    survey_id: Optional[int] = None
+    filename: str
+    detected_format: str
+    row_count: int
+    column_count: int
+    columns: list[SurveyColumnMetadata]
+    statistics: dict[str, Any]
+    charts: list[dict[str, Any]] = Field(default_factory=list)
+    quality_issues: list[dict[str, Any]] = Field(default_factory=list)
+    summary: str
+    survey: Optional[SurveyUploadResponse] = None
 
 
 class SurveyListItem(BaseModel):

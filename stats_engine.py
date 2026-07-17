@@ -87,7 +87,7 @@ def analyze(df: pd.DataFrame) -> StatisticsResult:
     result = StatisticsResult()
 
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    categorical_cols = df.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+    categorical_cols = df.select_dtypes(include=["object", "string", "category", "bool"]).columns.tolist()
 
     # 1. Tanımlayıcı istatistikler
     result.descriptive = _descriptive_stats(df, numeric_cols)

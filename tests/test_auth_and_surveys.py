@@ -1,3 +1,4 @@
+import io
 import os
 
 os.environ["AUTO_CREATE_TABLES"] = "0"
@@ -6,8 +7,9 @@ os.environ["SECRET_KEY"] = "test-secret"
 os.environ["SQLALCHEMY_DATABASE_URL"] = "sqlite:///./test_app.db"
 
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 
-from database import Base, engine
+from database import Base, SessionLocal, engine
 import models  # noqa: F401
 from main import app
 
@@ -107,6 +109,108 @@ def test_cors_allows_local_vite_application():
     )
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_upload_general_dataset_saves_source_metadata_and_analysis():
+    headers = _auth_headers("general-dataset@example.com")
+    csv_content = b"id,city,score\n1,Ankara,10\n2,Izmir,20\n2,Izmir,20\n3,,30\n"
+
+    response = client.post(
+        "/datasets/upload",
+        headers=headers,
+        files={"file": ("scores.csv", csv_content, "text/csv")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["detected_format"] == "general"
+    assert body["survey_id"] is None
+    assert body["row_count"] == 4
+    assert body["column_count"] == 3
+    assert body["analysis_id"] > 0
+    assert any(issue["type"] == "duplicate_rows" for issue in body["quality_issues"])
+    assert body["charts"]
+
+    db = SessionLocal()
+    try:
+        source_file = (
+            db.query(models.DatasetFile)
+            .filter(models.DatasetFile.dataset_id == body["dataset_id"])
+            .one()
+        )
+        analysis = db.query(models.DataAnalysis).filter(models.DataAnalysis.id == body["analysis_id"]).one()
+        assert source_file.content == csv_content
+        assert source_file.size_bytes == len(csv_content)
+        assert analysis.dataset_id == body["dataset_id"]
+        assert analysis.analysis_type == "general"
+    finally:
+        db.close()
+
+
+def test_upload_general_xlsx_dataset():
+    headers = _auth_headers("general-xlsx@example.com")
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.append(["city", "score"])
+    worksheet.append(["Ankara", 10])
+    worksheet.append(["Izmir", 20])
+    stream = io.BytesIO()
+    workbook.save(stream)
+
+    response = client.post(
+        "/datasets/upload",
+        headers=headers,
+        files={
+            "file": (
+                "scores.xlsx",
+                stream.getvalue(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["detected_format"] == "general"
+    assert body["row_count"] == 2
+    assert body["column_count"] == 2
+
+
+def test_upload_dataset_detects_survey_and_returns_survey_summary():
+    headers = _auth_headers("unified-survey@example.com")
+    csv_content = "\n".join(
+        [
+            "ANKET ADI: BIRIM MEMNUNIYET ANKETI;;;;",
+            'KODLARKEN DIKKAT EDINIZ!;Tarih;"1": Memnun Degilim | "2": Memnunum;Metin',
+            "No.;Tarih;1. Hizmetten memnun musunuz?;Gorus ve Oneriler",
+            "1;2026-01-01;2;Iyi",
+            "2;2026-01-02;1;",
+        ]
+    ).encode("utf-8")
+
+    response = client.post(
+        "/datasets/upload",
+        headers=headers,
+        files={"file": ("survey.csv", csv_content, "text/csv")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["detected_format"] == "survey"
+    assert body["survey_id"] > 0
+    assert body["survey"]["title"] == "BIRIM MEMNUNIYET ANKETI"
+    assert body["statistics"]["summary"]["response_count"] == 2
+    assert body["charts"]
+
+
+def test_upload_dataset_rejects_unsupported_file_type():
+    headers = _auth_headers("unsupported-dataset@example.com")
+    response = client.post(
+        "/datasets/upload",
+        headers=headers,
+        files={"file": ("dataset.txt", b"hello", "text/plain")},
+    )
+    assert response.status_code == 400
 
 
 def test_upload_survey_csv_returns_dataset_questions_quality_and_summary():

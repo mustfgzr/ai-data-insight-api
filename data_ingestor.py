@@ -9,12 +9,17 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass, field
+from datetime import date, datetime
+from typing import Any
 
 import pandas as pd
 from fastapi import HTTPException, UploadFile
 
 
 SUPPORTED_DATA_EXTENSIONS = {".xlsx", ".xls", ".csv"}
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_ROWS = 10_000
+MAX_COLUMNS = 300
 
 
 @dataclass
@@ -25,6 +30,8 @@ class ColumnInfo:
     missing_count: int
     missing_pct: float
     unique_count: int
+    sample_values: list[Any] = field(default_factory=list)
+    semantic_type: str = "unknown"
 
 
 @dataclass
@@ -66,12 +73,16 @@ def _build_columns_info(df: pd.DataFrame) -> list[ColumnInfo]:
         series = df[col]
         missing = int(series.isna().sum())
         total = len(series)
+        dtype = _classify_dtype(series)
+        samples = [_jsonable(value) for value in series.dropna().head(5).tolist()]
         infos.append(ColumnInfo(
             name=str(col),
-            dtype=_classify_dtype(series),
+            dtype=dtype,
             missing_count=missing,
             missing_pct=round((missing / total) * 100, 1) if total > 0 else 0.0,
             unique_count=int(series.nunique()),
+            sample_values=samples,
+            semantic_type=dtype,
         ))
     return infos
 
@@ -134,7 +145,16 @@ async def ingest_file(
 
     Desteklenen formatlar: .xlsx, .xls, .csv
     """
-    filename = file.filename or "unknown"
+    content = await file.read()
+    return ingest_content(file.filename or "unknown", content, sheet_name)
+
+
+def ingest_content(
+    filename: str,
+    content: bytes,
+    sheet_name: str | None = None,
+) -> IngestedData:
+    """Bellekteki CSV/Excel içeriğini ayrıştırır."""
     ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
     if ext not in SUPPORTED_DATA_EXTENSIONS:
@@ -144,21 +164,30 @@ async def ingest_file(
                    f"Desteklenen: {', '.join(sorted(SUPPORTED_DATA_EXTENSIONS))}",
         )
 
-    content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Dosya boş")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Dosya boyutu izin verilen sınırı aşıyor")
 
-    # Formatına göre oku
-    if ext == ".csv":
-        df = _read_csv(content)
-    else:
-        df = _read_excel(content, sheet_name)
+    try:
+        if ext == ".csv":
+            df = _read_csv(content)
+        else:
+            df = _read_excel(content, sheet_name)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Dosya okunamadı: {exc}") from exc
 
     # Tamamen boş satır/sütunları temizle
     df = df.dropna(how="all").dropna(axis=1, how="all")
 
     if df.empty:
         raise HTTPException(status_code=400, detail="Dosyada işlenebilir veri bulunamadı")
+    if len(df) > MAX_ROWS:
+        raise HTTPException(status_code=413, detail="Satır sayısı izin verilen sınırı aşıyor")
+    if len(df.columns) > MAX_COLUMNS:
+        raise HTTPException(status_code=413, detail="Kolon sayısı izin verilen sınırı aşıyor")
 
     # Sayısal olabilecek sütunları dönüştürmeyi dene
     for col in df.columns:
@@ -172,8 +201,8 @@ async def ingest_file(
     columns_info = _build_columns_info(df)
 
     # Önizleme (NaN → None)
-    head = df.head(5).where(df.head(5).notna(), None).to_dict(orient="records")
-    tail = df.tail(5).where(df.tail(5).notna(), None).to_dict(orient="records")
+    head = dataframe_records(df.head(5))
+    tail = dataframe_records(df.tail(5))
 
     return IngestedData(
         df=df,
@@ -184,3 +213,24 @@ async def ingest_file(
         preview_head=head,
         preview_tail=tail,
     )
+
+
+def dataframe_records(df: pd.DataFrame) -> list[dict[str, Any]]:
+    """DataFrame satırlarını JSON saklamaya uygun dict listesine dönüştürür."""
+    return [
+        {str(column): _jsonable(value) for column, value in row.items()}
+        for row in df.to_dict(orient="records")
+    ]
+
+
+def _jsonable(value: Any) -> Any:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, (datetime, date, pd.Timestamp)):
+        return value.isoformat()
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except ValueError:
+            pass
+    return value

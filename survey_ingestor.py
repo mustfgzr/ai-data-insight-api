@@ -99,7 +99,7 @@ class ParsedSurvey:
     year: int | None = None
 
 
-async def parse_survey_upload(file: UploadFile) -> ParsedSurvey:
+async def parse_survey_upload(file: UploadFile, content: bytes | None = None) -> ParsedSurvey:
     filename = file.filename or "unknown"
     ext = Path(filename).suffix.lower()
     if ext not in SUPPORTED_SURVEY_EXTENSIONS:
@@ -108,7 +108,8 @@ async def parse_survey_upload(file: UploadFile) -> ParsedSurvey:
             detail=f"Desteklenmeyen dosya formatı: {ext}. Desteklenen formatlar: .csv, .xlsx, .xls",
         )
 
-    content = await file.read()
+    if content is None:
+        content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Dosya boş")
     if len(content) > MAX_UPLOAD_BYTES:
