@@ -20,9 +20,15 @@ from templates import get_template
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-client = genai.Client(api_key=GEMINI_API_KEY)
 
 MODEL = "gemini-3.1-flash-lite"
+
+
+def _get_client() -> genai.Client:
+    """Gemini istemcisini uygulama acilisindan bagimsiz olarak olusturur."""
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY ayarlanmadan AI raporlari olusturulamaz")
+    return genai.Client(api_key=GEMINI_API_KEY)
 
 
 def generate_report_from_analyses(
@@ -69,7 +75,7 @@ ANALİZ ÖZETLERİ:
     if question:
         prompt += f"\n\nKULLANICININ ODAK SORUSU:\n{question}"
 
-    response = client.models.generate_content(model=MODEL, contents=prompt)
+    response = _get_client().models.generate_content(model=MODEL, contents=prompt)
     return prompt, response.text.strip()
 
 
@@ -96,7 +102,7 @@ def strategic_analysis(
     prompt = template.build_prompt(ingested, stats, question)
 
     # Gemini'a gönder
-    response = client.models.generate_content(
+    response = _get_client().models.generate_content(
         model=MODEL,
         contents=prompt,
     )
@@ -181,7 +187,7 @@ KULLANICININ SORUSU:
 
 Yukarıdaki bölümlere ek olarak, bu soruyu "6. KULLANICI SORUSUNA YANIT" başlığında yanıtla."""
 
-    response = client.models.generate_content(model=MODEL, contents=prompt)
+    response = _get_client().models.generate_content(model=MODEL, contents=prompt)
     return response.text.strip()
 
 
@@ -234,7 +240,7 @@ Yanıtını şu şekilde yapılandır:
 2. DESTEKLEYEN VERİ: Yanıtı destekleyen sayısal kanıtlar
 3. EK NOTLAR: Soruyla ilgili dikkat çekmek istediğin ek bilgiler"""
 
-    response = client.models.generate_content(model=MODEL, contents=prompt)
+    response = _get_client().models.generate_content(model=MODEL, contents=prompt)
     return response.text.strip()
 
 
