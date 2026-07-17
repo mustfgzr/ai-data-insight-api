@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.sql import func
 from database import Base
 
@@ -25,12 +25,18 @@ class DataAnalysis(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=True, index=True)
     filename = Column(String, nullable=False)
     template = Column(String, default="general")
+    analysis_type = Column(String, default="dataset")
+    status = Column(String, default="completed")
     row_count = Column(Integer)
     column_count = Column(Integer)
     columns_info = Column(Text)       # JSON: sütun adları + tipler
     statistics = Column(Text)         # JSON: istatistik sonuçları
+    chart_data = Column(Text)         # JSON: frontend grafik verileri
+    quality_issues = Column(Text)     # JSON: veri kalite uyarıları
+    summary = Column(Text)             # Kural tabanlı kısa özet
     ai_report = Column(Text)          # Gemini stratejik rapor
     question = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
@@ -47,6 +53,18 @@ class Dataset(Base):
     detected_format = Column(String, default="survey")
     row_count = Column(Integer, default=0)
     column_count = Column(Integer, default=0)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class DatasetFile(Base):
+    __tablename__ = "dataset_files"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=False, unique=True, index=True)
+    content_type = Column(String)
+    size_bytes = Column(Integer, nullable=False)
+    checksum = Column(String, nullable=False, index=True)
+    content = Column(LargeBinary, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -145,3 +163,29 @@ class SurveyReport(Base):
     quality_issues = Column(Text)
     ai_report = Column(Text)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class Report(Base):
+    __tablename__ = "reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title = Column(String, nullable=False)
+    status = Column(String, default="pending", nullable=False)
+    prompt = Column(Text)
+    content = Column(Text)
+    error_message = Column(Text)
+    model_name = Column(String)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class ReportAnalysis(Base):
+    __tablename__ = "report_analyses"
+    __table_args__ = (
+        UniqueConstraint("report_id", "analysis_id", name="uq_report_analyses_report_analysis"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    report_id = Column(Integer, ForeignKey("reports.id"), nullable=False, index=True)
+    analysis_id = Column(Integer, ForeignKey("data_analyses.id"), nullable=False, index=True)
+    order_index = Column(Integer, default=0, nullable=False)

@@ -21,7 +21,7 @@ from ai_analyst import strategic_analysis, compare_datasets, ask_about_data
 from survey_ingestor import parse_survey_upload
 from survey_storage import get_survey_detail, save_parsed_survey
 
-if os.getenv("AUTO_CREATE_TABLES", "1") == "1":
+if os.getenv("AUTO_CREATE_TABLES", "0") == "1":
     models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
