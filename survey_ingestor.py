@@ -62,6 +62,7 @@ class ParsedQuestion:
     column_name: str
     question_no: str | None
     question_text: str
+    display_label: str
     question_type: str
     scale_type: str | None
     options: dict[str, str] = field(default_factory=dict)
@@ -100,7 +101,12 @@ class ParsedSurvey:
 
 
 async def parse_survey_upload(file: UploadFile, content: bytes | None = None) -> ParsedSurvey:
-    filename = file.filename or "unknown"
+    if content is None:
+        content = await file.read()
+    return parse_survey_content(file.filename or "unknown", content)
+
+
+def parse_survey_content(filename: str, content: bytes) -> ParsedSurvey:
     ext = Path(filename).suffix.lower()
     if ext not in SUPPORTED_SURVEY_EXTENSIONS:
         raise HTTPException(
@@ -108,8 +114,6 @@ async def parse_survey_upload(file: UploadFile, content: bytes | None = None) ->
             detail=f"Desteklenmeyen dosya formatı: {ext}. Desteklenen formatlar: .csv, .xlsx, .xls",
         )
 
-    if content is None:
-        content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Dosya boş")
     if len(content) > MAX_UPLOAD_BYTES:
@@ -242,7 +246,15 @@ def _trim_empty_edges(rows: list[list[Any]]) -> list[list[Any]]:
     if not trimmed:
         return []
     max_len = max(len(row) for row in trimmed)
-    return [row + [""] * (max_len - len(row)) for row in trimmed]
+    present_columns = [
+        index
+        for index in range(max_len)
+        if any(index < len(row) and _is_present(row[index]) for row in trimmed)
+    ]
+    return [
+        [row[index] if index < len(row) else "" for index in present_columns]
+        for row in trimmed
+    ]
 
 
 def _detect_title(rows: list[list[Any]]) -> str | None:
@@ -369,6 +381,7 @@ def _build_questions(columns: list[ParsedColumn]) -> list[ParsedQuestion]:
                 column_name=column.name,
                 question_no=question_no,
                 question_text=question_text,
+                display_label=question_display_label(question_text),
                 question_type=question_type,
                 scale_type=scale_type,
                 options=column.code_map,
@@ -379,6 +392,22 @@ def _build_questions(columns: list[ParsedColumn]) -> list[ParsedQuestion]:
             )
         )
     return questions
+
+
+def question_display_label(question_text: str) -> str:
+    """Returns a concise label only when the question text contains one clearly."""
+    text = re.sub(r"\s+", " ", str(question_text)).strip()
+    if not text:
+        return "Soru"
+
+    after_question = text.rsplit("?", 1)[-1].strip(" .:-") if "?" in text else ""
+    if 3 <= len(after_question) <= 100:
+        return after_question
+
+    if re.search(r"\bgenel(?:\s+olarak)?\s+memnuniyet", text, flags=re.IGNORECASE):
+        return "Genel memnuniyet"
+
+    return text
 
 
 def _build_report(

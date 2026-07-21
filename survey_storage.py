@@ -16,7 +16,8 @@ from schemas import (
     SurveyReportItem,
     SurveyUploadResponse,
 )
-from survey_ingestor import ParsedSurvey
+from survey_ingestor import ParsedSurvey, question_display_label
+from survey_research_service import build_and_save_survey_research
 
 
 def save_parsed_survey(
@@ -25,20 +26,24 @@ def save_parsed_survey(
     parsed: ParsedSurvey,
     source_content: bytes | None = None,
     content_type: str | None = None,
+    dataset: models.Dataset | None = None,
 ) -> SurveyUploadResponse:
-    dataset = models.Dataset(
-        user_id=user_id,
-        filename=parsed.filename,
-        original_filename=parsed.filename,
-        file_type=parsed.file_type,
-        detected_format="survey",
-        row_count=parsed.row_count,
-        column_count=parsed.column_count,
-    )
-    db.add(dataset)
-    db.flush()
+    if dataset is None:
+        dataset = models.Dataset(
+            user_id=user_id,
+            filename=parsed.filename,
+            original_filename=parsed.filename,
+            file_type=parsed.file_type,
+            detected_format="survey",
+            row_count=parsed.row_count,
+            column_count=parsed.column_count,
+        )
+        db.add(dataset)
+        db.flush()
+    else:
+        _replace_dataset_contents(db, dataset, parsed)
 
-    if source_content is not None:
+    if source_content is not None and dataset is not None:
         db.add(
             models.DatasetFile(
                 dataset_id=dataset.id,
@@ -138,16 +143,7 @@ def save_parsed_survey(
             )
             db.add(answer)
 
-    report = models.SurveyReport(
-        survey_id=survey.id,
-        report_type="auto",
-        status="completed",
-        summary=_dumps(parsed.report.summary),
-        metrics=_dumps(parsed.report.metrics),
-        quality_issues=_dumps(parsed.report.quality_issues),
-        ai_report=parsed.report.report_text,
-    )
-    db.add(report)
+    report = build_and_save_survey_research(db, survey)
 
     db.add(
         models.DataAnalysis(
@@ -192,6 +188,27 @@ def save_parsed_survey(
     db.refresh(report)
 
     return _build_upload_response(dataset, survey, report, parsed)
+
+
+def _replace_dataset_contents(
+    db: Session,
+    dataset: models.Dataset,
+    parsed: ParsedSurvey,
+) -> None:
+    """Survey algilandiginda mevcut dataset'i kanonik survey satirlariyla gunceller."""
+    db.query(models.DatasetRow).filter(models.DatasetRow.dataset_id == dataset.id).delete(
+        synchronize_session=False
+    )
+    db.query(models.DatasetColumn).filter(models.DatasetColumn.dataset_id == dataset.id).delete(
+        synchronize_session=False
+    )
+    dataset.filename = parsed.filename
+    dataset.original_filename = parsed.filename
+    dataset.file_type = parsed.file_type
+    dataset.detected_format = "survey"
+    dataset.row_count = parsed.row_count
+    dataset.column_count = parsed.column_count
+    db.flush()
 
 
 def get_survey_detail(db: Session, user_id: int, survey_id: int) -> SurveyDetailResponse | None:
@@ -277,6 +294,7 @@ def _build_upload_response(
                 column_name=question.column_name,
                 question_no=question.question_no,
                 question_text=question.question_text,
+                display_label=question.display_label,
                 question_type=question.question_type,
                 scale_type=question.scale_type,
                 options=question.options,
@@ -310,6 +328,7 @@ def _question_schema(question: models.SurveyQuestion) -> SurveyQuestionItem:
         column_name=question.column_name,
         question_no=question.question_no,
         question_text=question.question_text,
+        display_label=question_display_label(question.question_text),
         question_type=question.question_type,
         scale_type=question.scale_type,
         options=_loads(question.options, {}),
@@ -328,6 +347,8 @@ def _report_schema(report: models.SurveyReport) -> SurveyReportItem:
         metrics=_loads(report.metrics, {}),
         quality_issues=_loads(report.quality_issues, []),
         ai_report=report.ai_report or "",
+        ai_report_status=report.ai_report_status,
+        ai_report_warning=report.ai_report_warning,
         created_at=report.created_at,
     )
 

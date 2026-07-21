@@ -22,7 +22,8 @@ def summarize_text(text: str) -> str:
     if len(text) > max_chars:
         text = text[:max_chars] + "\n\n[... metin kırpıldı ...]"
 
-    response = _get_client().models.generate_content(
+    client = _get_client()
+    response = client.models.generate_content(
         model="gemini-3.1-flash-lite",
         contents=f"Aşağıdaki metni Türkçe olarak detaylı bir şekilde özetle:\n\n{text}",
     )

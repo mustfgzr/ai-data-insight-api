@@ -7,6 +7,8 @@ import type {
   DatasetUpload,
   ReportDetail,
   ReportListItem,
+  SurveyDetection,
+  SurveyResearch,
   User,
 } from "./types";
 
@@ -57,6 +59,15 @@ export const api = {
   datasetRows: (id: number, offset: number, token: string) =>
     request<DatasetRows>(`/datasets/${id}/rows?offset=${offset}&limit=50`, {}, token),
   downloadUrl: (id: number) => `${API_URL}/datasets/${id}/download`,
+  analyzeDataset: (id: number, token: string, payload: { template?: string; question?: string } = {}) =>
+    request<AnalysisDetail>(`/datasets/${id}/analyses`, { method: "POST", body: JSON.stringify(payload) }, token),
+  detectSurvey: (id: number, token: string) =>
+    request<SurveyDetection>(`/datasets/${id}/detect-survey`, { method: "POST" }, token),
+  surveyResearch: (id: number, token: string) => request<SurveyResearch>(`/surveys/${id}/research`, {}, token),
+  refreshSurveyResearch: (id: number, token: string) =>
+    request<SurveyResearch>(`/surveys/${id}/research/refresh`, { method: "POST" }, token),
+  createSurveyAiSummary: (id: number, token: string) =>
+    request<SurveyResearch>(`/surveys/${id}/research/ai-summary`, { method: "POST" }, token),
   analyses: (token: string) => request<AnalysisListItem[]>("/analyses", {}, token),
   analysis: (id: number, token: string) => request<AnalysisDetail>(`/analyses/${id}`, {}, token),
   reports: (token: string) => request<ReportListItem[]>("/reports", {}, token),

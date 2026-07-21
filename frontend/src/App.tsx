@@ -1,7 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./auth";
 import { RequireAuth } from "./components";
-import { AnalysisDetailPage, AnalysesPage, AuthPage, DatasetDetailPage, DatasetsPage, ReportDetailPage, ReportsPage, UploadPage } from "./pages";
+import { AnalysisDetailPage, AnalysesPage, AuthPage, DatasetDetailPage, DatasetsPage, ReportDetailPage, ReportsPage, SurveyResearchPage, UploadPage } from "./pages";
 
 export default function App() {
   return <AuthProvider><BrowserRouter><Routes>
@@ -11,6 +11,7 @@ export default function App() {
       <Route path="/upload" element={<UploadPage />} />
       <Route path="/datasets" element={<DatasetsPage />} />
       <Route path="/datasets/:id" element={<DatasetDetailPage />} />
+      <Route path="/surveys/:id/research" element={<SurveyResearchPage />} />
       <Route path="/analyses" element={<AnalysesPage />} />
       <Route path="/analyses/:id" element={<AnalysisDetailPage />} />
       <Route path="/reports" element={<ReportsPage />} />

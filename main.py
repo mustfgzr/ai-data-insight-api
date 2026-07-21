@@ -13,9 +13,10 @@ from schemas import (
     UserCreate, UserLogin, UserResponse, Token, AnalysisResponse,
     DataAnalysisResponse, DataAnalysisListItem,
     CompareResponse, AskResponse,
-    DatasetDetailResponse, DatasetListResponse, DatasetRowsResponse, DatasetUploadResponse,
+    DatasetAnalysisCreate, DatasetComparisonCreate, DatasetDetailResponse,
+    DatasetListResponse, DatasetQuestionCreate, DatasetRowsResponse, DatasetUploadResponse,
     ReportCreate, ReportDetailResponse, ReportListItem,
-    SurveyUploadResponse, SurveyListItem, SurveyDetailResponse,
+    SurveyDetectionResponse, SurveyResearchResponse, SurveyUploadResponse, SurveyListItem, SurveyDetailResponse,
 )
 from auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -29,10 +30,21 @@ from file_parser import extract_text
 from ai_service import summarize_text
 from data_ingestor import ingest_file
 from stats_engine import analyze as stats_analyze, result_to_dict
-from ai_analyst import strategic_analysis, compare_datasets, ask_about_data
+from ai_analyst import (
+    GEMINI_NOT_CONFIGURED_WARNING,
+    ask_about_data,
+    compare_datasets,
+    is_gemini_configured,
+    strategic_analysis,
+)
 from survey_ingestor import parse_survey_upload
 from survey_storage import get_survey_detail, save_parsed_survey
 from dataset_service import upload_dataset as process_dataset_upload
+from dataset_analysis_service import (
+    ask_about_owned_dataset,
+    compare_owned_datasets,
+    create_analysis_for_dataset,
+)
 from dataset_query_service import (
     get_analysis_detail,
     get_dataset_detail,
@@ -42,6 +54,12 @@ from dataset_query_service import (
     list_datasets as list_dataset_history,
 )
 from report_service import create_report as create_saved_report, get_report_detail, list_reports as list_saved_reports
+from survey_detection_service import detect_survey_for_dataset
+from survey_research_service import (
+    create_survey_research_ai_summary,
+    get_survey_research,
+    refresh_survey_research,
+)
 
 if os.getenv("AUTO_CREATE_TABLES", "0") == "1":
     models.Base.metadata.create_all(bind=engine)
@@ -144,7 +162,7 @@ async def analyze(
 
 # ── FAZ 3: Veri Analiz Motoru Endpoint'leri ───────────────────
 
-@app.post("/analyze/data", response_model=DataAnalysisResponse)
+@app.post("/analyze/data", response_model=DataAnalysisResponse, deprecated=True)
 async def analyze_data(
     file: UploadFile = File(...),
     template: str = Form("general"),
@@ -164,13 +182,23 @@ async def analyze_data(
     from dataclasses import asdict
     columns_info_list = [asdict(c) for c in ingested.columns]
 
-    # 4. Gemini stratejik analiz
-    ai_report = strategic_analysis(
-        ingested=ingested,
-        stats=stats_result,
-        template_name=template,
-        question=question,
-    )
+    # 4. Gemini stratejik analiz temel veri analizinden bagimsizdir.
+    ai_report = None
+    ai_report_status = "skipped"
+    ai_report_warning = GEMINI_NOT_CONFIGURED_WARNING
+    if is_gemini_configured():
+        try:
+            ai_report = strategic_analysis(
+                ingested=ingested,
+                stats=stats_result,
+                template_name=template,
+                question=question,
+            )
+            ai_report_status = "completed"
+            ai_report_warning = None
+        except Exception:
+            ai_report_status = "failed"
+            ai_report_warning = "Gemini servisi kullanilamadigi icin AI raporu olusturulamadi."
 
     # 5. Veritabanına kaydet
     db_record = models.DataAnalysis(
@@ -182,6 +210,8 @@ async def analyze_data(
         columns_info=json.dumps(columns_info_list, ensure_ascii=False),
         statistics=json.dumps(stats_dict, ensure_ascii=False),
         ai_report=ai_report,
+        ai_report_status=ai_report_status,
+        ai_report_warning=ai_report_warning,
         question=question,
     )
     db.add(db_record)
@@ -198,12 +228,14 @@ async def analyze_data(
         columns_info=columns_info_list,
         statistics=stats_dict,
         ai_report=db_record.ai_report,
+        ai_report_status=db_record.ai_report_status,
+        ai_report_warning=db_record.ai_report_warning,
         question=db_record.question,
         created_at=db_record.created_at,
     )
 
 
-@app.post("/analyze/compare", response_model=CompareResponse)
+@app.post("/analyze/compare", response_model=CompareResponse, deprecated=True)
 async def analyze_compare(
     file1: UploadFile = File(...),
     file2: UploadFile = File(...),
@@ -230,7 +262,7 @@ async def analyze_compare(
     )
 
 
-@app.post("/analyze/ask", response_model=AskResponse)
+@app.post("/analyze/ask", response_model=AskResponse, deprecated=True)
 async def analyze_ask(
     file: UploadFile = File(...),
     question: str = Form(...),
@@ -275,7 +307,12 @@ def get_analysis(
     return detail
 
 
-@app.post("/surveys/upload", response_model=SurveyUploadResponse, status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/surveys/upload",
+    response_model=SurveyUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+    deprecated=True,
+)
 async def upload_survey(
     file: UploadFile = File(...),
     current_user: models.User = Depends(get_current_user),
@@ -315,6 +352,70 @@ async def upload_dataset(
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Dataset dosyası işlenirken hata oluştu: {exc}")
+
+
+@app.post(
+    "/datasets/{dataset_id}/analyses",
+    response_model=DataAnalysisResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def analyze_existing_dataset(
+    dataset_id: int,
+    request: DatasetAnalysisCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Kalici dataset satirlarindan yeni ve bagimsiz bir analiz olusturur."""
+    try:
+        return create_analysis_for_dataset(
+            db,
+            current_user.id,
+            dataset_id,
+            request.template,
+            request.question,
+        )
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Dataset analizi olusturulamadi") from exc
+
+
+@app.post("/datasets/{dataset_id}/detect-survey", response_model=SurveyDetectionResponse)
+def detect_dataset_survey(
+    dataset_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Kalici kaynak dosyadan survey yapisini algilar ve varsa dataset'e baglar."""
+    try:
+        return detect_survey_for_dataset(db, current_user.id, dataset_id)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Survey algilama tamamlanamadi") from exc
+
+
+@app.post("/datasets/{dataset_id}/ask", response_model=AskResponse)
+def ask_about_existing_dataset(
+    dataset_id: int,
+    request: DatasetQuestionCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return ask_about_owned_dataset(db, current_user.id, dataset_id, request.question)
+
+
+@app.post("/dataset-comparisons", response_model=CompareResponse)
+def compare_existing_datasets(
+    request: DatasetComparisonCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return compare_owned_datasets(db, current_user.id, request.dataset_ids, request.question)
 
 
 @app.get("/datasets", response_model=DatasetListResponse)
@@ -432,3 +533,47 @@ def get_survey(
     if detail is None:
         raise HTTPException(status_code=404, detail="Anket bulunamadı")
     return detail
+
+
+@app.get("/surveys/{survey_id}/research", response_model=SurveyResearchResponse)
+def get_research_analysis(
+    survey_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Anketin kaydedilmiş, Gemini'den bağımsız sayısal araştırma analizini getirir."""
+    return get_survey_research(db, current_user.id, survey_id)
+
+
+@app.post("/surveys/{survey_id}/research/refresh", response_model=SurveyResearchResponse)
+def refresh_research_analysis(
+    survey_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Mevcut anket cevaplarından araştırma analizini dosya yüklemeden yeniden hesaplar."""
+    try:
+        return refresh_survey_research(db, current_user.id, survey_id)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Anket araştırma analizi oluşturulamadı") from exc
+
+
+@app.post("/surveys/{survey_id}/research/ai-summary", response_model=SurveyResearchResponse)
+def create_research_ai_summary(
+    survey_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Kaydedilmiş sayısal araştırma sonucundan isteğe bağlı Gemini özeti üretir."""
+    try:
+        return create_survey_research_ai_summary(db, current_user.id, survey_id)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Anket AI özeti oluşturulamadı") from exc

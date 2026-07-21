@@ -38,6 +38,8 @@ class DataAnalysis(Base):
     quality_issues = Column(Text)     # JSON: veri kalite uyarıları
     summary = Column(Text)             # Kural tabanlı kısa özet
     ai_report = Column(Text)          # Gemini stratejik rapor
+    ai_report_status = Column(String, default="completed", nullable=False)
+    ai_report_warning = Column(Text)
     question = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
@@ -96,6 +98,9 @@ class DatasetRow(Base):
 
 class Survey(Base):
     __tablename__ = "surveys"
+    __table_args__ = (
+        UniqueConstraint("dataset_id", name="uq_surveys_dataset_id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=False, index=True)
@@ -162,6 +167,8 @@ class SurveyReport(Base):
     metrics = Column(Text)
     quality_issues = Column(Text)
     ai_report = Column(Text)
+    ai_report_status = Column(String, default="not_requested", nullable=False)
+    ai_report_warning = Column(Text)
     created_at = Column(DateTime, server_default=func.now())
 
 

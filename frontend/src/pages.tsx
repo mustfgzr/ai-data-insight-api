@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import { Download, FilePlus2, FileText, LoaderCircle, Plus, Sparkles, UploadCloud } from "lucide-react";
+import { BarChart3, Download, FilePlus2, FileText, LoaderCircle, Plus, Sparkles, UploadCloud } from "lucide-react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { api } from "./api";
 import { useAuth } from "./auth";
-import { EmptyState, ErrorNotice, MiniBarChart, PageHeader, StatusPill } from "./components";
-import type { AnalysisDetail, AnalysisListItem, DatasetDetail, DatasetListItem, DatasetRows, DatasetUpload, ReportDetail, ReportListItem } from "./types";
+import { EmptyState, ErrorNotice, MiniBarChart, PageHeader, StatusPill, SurveyResearchChart } from "./components";
+import type { AnalysisDetail, AnalysisListItem, DatasetDetail, DatasetListItem, DatasetRows, DatasetUpload, ReportDetail, ReportListItem, SurveyGroupScore, SurveyResearch } from "./types";
 
 const formatDate = (value?: string) => value ? new Intl.DateTimeFormat("tr-TR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
 const formatValue = (value: unknown) => value === null || value === undefined || value === "" ? "-" : typeof value === "object" ? JSON.stringify(value) : String(value);
+const formatScore = (value?: number | null) => value === null || value === undefined ? "-" : value.toLocaleString("tr-TR", { maximumFractionDigits: 2 });
 const loadError = (error: unknown) => error instanceof Error ? error.message : "Veriler yuklenirken bir hata olustu.";
 
 export function AuthPage({ mode }: { mode: "login" | "register" }) {
@@ -65,7 +66,7 @@ export function UploadPage() {
     <button className="primary-button upload-submit" disabled={!file || pending} onClick={submit}>{pending && <LoaderCircle className="spin" size={17} />}{pending ? "Isleniyor..." : "Analizi baslat"}</button></div>
       <aside className="upload-notes"><h2>Yukleme kapsami</h2><dl><div><dt>Desteklenen</dt><dd>CSV ve XLSX</dd></div><div><dt>Otomatik cikarim</dt><dd>Kolon, tip, eksik deger, ornek deger</dd></div><div><dt>Anket tanima</dt><dd>Soru, secenek ve dagilimlar</dd></div><div><dt>Sinirlar</dt><dd>20 MB, 10.000 satir, 300 kolon</dd></div></dl></aside>
     </section>
-    {result && <section className="result-panel"><div><p className="eyebrow">YUKLEME TAMAMLANDI</p><h2>{result.filename}</h2><p>{result.summary}</p></div><div className="metric-grid"><Metric label="Satir" value={result.row_count} /><Metric label="Kolon" value={result.column_count} /><Metric label="Uyari" value={result.quality_issues.length} /></div><div className="result-actions"><button className="secondary-button" onClick={() => navigate(`/datasets/${result.dataset_id}`)}>Veri setini gor</button><button className="primary-button" onClick={() => navigate(`/analyses/${result.analysis_id}`)}>Analizi gor</button></div></section>}
+    {result && <section className="result-panel"><div><p className="eyebrow">YUKLEME TAMAMLANDI</p><h2>{result.filename}</h2><p>{result.summary}</p></div><div className="metric-grid"><Metric label="Satir" value={result.row_count} /><Metric label="Kolon" value={result.column_count} /><Metric label="Uyari" value={result.quality_issues.length} /></div><div className="result-actions"><button className="secondary-button" onClick={() => navigate(`/datasets/${result.dataset_id}`)}>Veri setini gor</button>{result.survey_id ? <button className="primary-button" onClick={() => navigate(`/surveys/${result.survey_id}/research`)}>Anket arastirmasi</button> : <button className="primary-button" onClick={() => navigate(`/analyses/${result.analysis_id}`)}>Analizi gor</button>}</div></section>}
   </div>;
 }
 
@@ -80,16 +81,39 @@ export function DatasetsPage() {
 }
 
 export function DatasetDetailPage() {
-  const { id } = useParams(); const datasetId = Number(id); const { token } = useAuth(); const [dataset, setDataset] = useState<DatasetDetail | null>(null); const [rows, setRows] = useState<DatasetRows | null>(null); const [error, setError] = useState("");
+  const { id } = useParams(); const datasetId = Number(id); const { token } = useAuth(); const [dataset, setDataset] = useState<DatasetDetail | null>(null); const [rows, setRows] = useState<DatasetRows | null>(null); const [error, setError] = useState(""); const [actionError, setActionError] = useState(""); const [actionMessage, setActionMessage] = useState(""); const [actionPending, setActionPending] = useState(false); const navigate = useNavigate();
   const refresh = () => { if (!token || !datasetId) return; Promise.all([api.dataset(datasetId, token), api.datasetRows(datasetId, 0, token)]).then(([detail, page]) => { setDataset(detail); setRows(page); }).catch((err) => setError(loadError(err))); };
   useEffect(refresh, [token, datasetId]);
+  const createAnalysis = async () => { if (!token) return; setActionPending(true); setActionError(""); try { const analysis = await api.analyzeDataset(datasetId, token); navigate(`/analyses/${analysis.id}`); } catch (err) { setActionError(loadError(err)); } finally { setActionPending(false); } };
+  const detectSurvey = async () => { if (!token) return; setActionPending(true); setActionError(""); try { const result = await api.detectSurvey(datasetId, token); setActionMessage(result.message || (result.detected ? "Anket algilandi." : "Anket yapisi bulunamadi.")); refresh(); } catch (err) { setActionError(loadError(err)); } finally { setActionPending(false); } };
   if (error) return <div className="page"><ErrorNotice message={error} /><Link className="secondary-button" to="/datasets">Listeye don</Link></div>;
   if (!dataset) return <Loading />;
   const headers = rows?.rows.length ? Object.keys(rows.rows[0]) : dataset.columns.map((column) => column.name);
-  return <div className="page"><PageHeader title={dataset.original_filename} detail={`${dataset.row_count} satir, ${dataset.column_count} kolon, ${dataset.detected_format} formati`} actions={<div className="header-actions">{dataset.has_source_file && <a className="secondary-button" href={api.downloadUrl(dataset.id)} target="_blank" rel="noreferrer"><Download size={16} />Kaynak dosya</a>}{dataset.latest_analysis_id && <Link className="primary-button" to={`/analyses/${dataset.latest_analysis_id}`}>Analizi ac</Link>}</div>} />
+  return <div className="page"><PageHeader title={dataset.original_filename} detail={`${dataset.row_count} satir, ${dataset.column_count} kolon, ${dataset.detected_format} formati`} actions={<div className="header-actions">{dataset.has_source_file && <a className="secondary-button" href={api.downloadUrl(dataset.id)} target="_blank" rel="noreferrer"><Download size={16} />Kaynak dosya</a>}{dataset.survey_id && <Link className="primary-button" to={`/surveys/${dataset.survey_id}/research`}><BarChart3 size={16} />Anket arastirmasi</Link>}{dataset.latest_analysis_id && <Link className="secondary-button" to={`/analyses/${dataset.latest_analysis_id}`}>Son analiz</Link>}{!dataset.survey_id && <button className="secondary-button" onClick={detectSurvey} disabled={actionPending}>Anket algila</button>}<button className="secondary-button" onClick={createAnalysis} disabled={actionPending}>{actionPending && <LoaderCircle className="spin" size={16} />}Yeni analiz</button></div>} />
+    {actionError && <ErrorNotice message={actionError} onDismiss={() => setActionError("")} />}{actionMessage && <p className="muted">{actionMessage}</p>}
     <section className="metric-grid top-metrics"><Metric label="Veri tipi" value={dataset.file_type.toUpperCase()} /><Metric label="Anket" value={dataset.survey_id ? "Algilandi" : "Genel veri"} /><Metric label="Satir" value={dataset.row_count} /><Metric label="Kolon" value={dataset.column_count} /></section>
     <section className="split-section"><div><h2>Kolon yapisi</h2><div className="data-table-wrap"><table className="data-table"><thead><tr><th>Kolon</th><th>Tip</th><th>Anlam</th><th>Eksik</th><th>Benzersiz</th><th>Ornekler</th></tr></thead><tbody>{dataset.columns.map((column) => <tr key={column.name}><td><strong>{column.name}</strong></td><td>{column.dtype}</td><td>{column.semantic_type}</td><td>{column.missing_pct.toFixed(1)}%</td><td>{column.unique_count}</td><td className="sample-cell">{column.sample_values.slice(0, 3).map(formatValue).join(", ") || "-"}</td></tr>)}</tbody></table></div></div></section>
     <section><h2>Satir onizlemesi</h2>{rows?.rows.length ? <div className="data-table-wrap"><table className="data-table compact"><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{rows.rows.map((row, index) => <tr key={index}>{headers.map((header) => <td key={header}>{formatValue(row[header])}</td>)}</tr>)}</tbody></table></div> : <p className="muted">Gosterilecek satir yok.</p>}</section>
+  </div>;
+}
+
+export function SurveyResearchPage() {
+  const { id } = useParams(); const surveyId = Number(id); const { token } = useAuth(); const [research, setResearch] = useState<SurveyResearch | null>(null); const [error, setError] = useState(""); const [pending, setPending] = useState(false);
+  const load = () => { if (!token || !surveyId) return; api.surveyResearch(surveyId, token).then(setResearch).catch((err) => setError(loadError(err))); };
+  useEffect(load, [token, surveyId]);
+  const refresh = async () => { if (!token) return; setPending(true); setError(""); try { setResearch(await api.refreshSurveyResearch(surveyId, token)); } catch (err) { setError(loadError(err)); } finally { setPending(false); } };
+  const createAiSummary = async () => { if (!token) return; setPending(true); setError(""); try { setResearch(await api.createSurveyAiSummary(surveyId, token)); } catch (err) { setError(loadError(err)); } finally { setPending(false); } };
+  if (error && !research) return <div className="page"><PageHeader title="Anket arastirmasi" detail="Kayitli anket verilerinden sayisal bulgular." actions={<button className="primary-button" onClick={refresh} disabled={pending}>{pending && <LoaderCircle className="spin" size={16} />}Arastirmayi hazirla</button>} /><ErrorNotice message={error} /><Link className="secondary-button" to="/datasets">Veri setlerine don</Link></div>;
+  if (!research) return <Loading />;
+  return <div className="page"><PageHeader title={research.title} detail="Sayisal anket arastirmasi. AI ozeti istege bagli ve bu hesaplamalardan ayri tutulur." actions={<div className="header-actions"><button className="secondary-button" onClick={refresh} disabled={pending}>{pending && <LoaderCircle className="spin" size={16} />}Yenile</button><button className="primary-button" onClick={createAiSummary} disabled={pending}>{pending && <LoaderCircle className="spin" size={16} />}<Sparkles size={16} />AI ozeti olustur</button></div>} />
+    {error && <ErrorNotice message={error} onDismiss={() => setError("")} />}
+    <section className="metric-grid top-metrics"><Metric label="Toplam yanit" value={research.response_count} /><Metric label="Puanlanabilir" value={research.scored_response_count} /><Metric label="Likert sorusu" value={research.likert_question_count} /><Metric label="Genel skor" value={research.overall_score_100 === null || research.overall_score_100 === undefined ? "-" : `${formatScore(research.overall_score_100)} / 100`} /></section>
+    <section><h2>Soru bazli memnuniyet</h2>{research.question_scores.length ? <div className="data-table-wrap"><table className="data-table research-table"><thead><tr><th>Soru</th><th>100 uzerinden skor</th><th>Yanit</th><th>Eksik</th></tr></thead><tbody>{research.question_scores.map((question) => <tr key={question.question_id}><td><strong>{question.label}</strong>{question.label !== question.question_text && <small>{question.question_text}</small>}</td><td><strong>{formatScore(question.score_100)}</strong></td><td>{question.response_count}</td><td>{question.missing_count} <span className="muted">(%{formatScore(question.missing_pct)})</span></td></tr>)}</tbody></table></div> : <p className="muted">Bu ankette 100 uzerinden puanlanabilir Likert sorusu bulunamadi.</p>}</section>
+    <section><h2>Sosyo-demografik bulgular</h2><div className="research-grid">{research.charts.filter((chart) => chart.id === "gender-distribution" || chart.id === "gender-satisfaction" || chart.id === "age-distribution" || chart.id === "age-satisfaction").map((chart) => <SurveyResearchChart key={chart.id} chart={chart} />)}</div></section>
+    <section className="split-section"><div><h2>Cinsiyet bazli memnuniyet</h2><GroupScoreTable groups={research.gender_scores} /></div><div><h2>Yas bazli memnuniyet</h2><GroupScoreTable groups={research.age_scores} /></div></section>
+    <section><h2>Mahalle bazli memnuniyet</h2><div className="research-grid">{research.charts.filter((chart) => chart.id === "neighborhood-satisfaction").map((chart) => <SurveyResearchChart key={chart.id} chart={chart} />)}</div><GroupScoreTable groups={research.neighborhood_scores} /></section>
+    {research.quality_issues.length > 0 && <section><h2>Veri kalite notlari</h2><div className="issue-grid">{research.quality_issues.map((issue, index) => <article className="issue-card" key={index}><StatusPill value={issue.severity} /><p>{String(issue.message ?? JSON.stringify(issue))}</p></article>)}</div></section>}
+    <section><h2>AI ozeti</h2>{research.ai_report ? <article className="report-content">{research.ai_report.split("\n").map((line, index) => line.trim() ? <p key={index}>{line}</p> : <br key={index} />)}</article> : <div className="summary-block"><p>{research.ai_report_warning || "AI ozeti henuz istenmedi. Sayisal arastirma analizi yukarida kullanima hazirdir."}</p></div>}</section>
   </div>;
 }
 
@@ -138,4 +162,5 @@ export function ReportDetailPage() {
 }
 
 function Metric({ label, value }: { label: string; value: string | number }) { return <div className="metric"><span>{label}</span><strong>{value}</strong></div>; }
+function GroupScoreTable({ groups }: { groups: SurveyGroupScore[] }) { return groups.length ? <div className="data-table-wrap"><table className="data-table compact research-table"><thead><tr><th>Grup</th><th>Skor</th><th>Katilimci</th></tr></thead><tbody>{groups.map((group) => <tr key={group.label}><td><strong>{group.label}</strong>{group.low_sample && <small>Az orneklem</small>}</td><td>{formatScore(group.score_100)}</td><td>{group.respondent_count}</td></tr>)}</tbody></table></div> : <p className="muted">Bu kirilim icin yeterli veri yok.</p>; }
 function Loading() { return <div className="loading-state"><LoaderCircle className="spin" size={24} />Yukleniyor...</div>; }

@@ -1,5 +1,6 @@
 import io
 import os
+from types import SimpleNamespace
 
 os.environ["AUTO_CREATE_TABLES"] = "0"
 os.environ["GEMINI_API_KEY"] = os.getenv("GEMINI_API_KEY", "test-key")
@@ -12,6 +13,7 @@ from openpyxl import Workbook
 from database import Base, SessionLocal, engine
 import models  # noqa: F401
 from main import app
+import ai_analyst
 
 
 client = TestClient(app)
@@ -44,6 +46,41 @@ def _auth_headers(email: str = "survey@example.com") -> dict[str, str]:
     assert body["token_type"] == "bearer"
     assert body["access_token"]
     return {"Authorization": f"Bearer {body['access_token']}"}
+
+
+def test_saved_report_generator_uses_a_live_gemini_client(monkeypatch):
+    class FakeModels:
+        def __init__(self):
+            self.calls = []
+
+        def generate_content(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(text="Test Gemini raporu")
+
+    class FakeClient:
+        def __init__(self):
+            self.models = FakeModels()
+
+    fake_client = FakeClient()
+    monkeypatch.setattr(ai_analyst, "_get_client", lambda: fake_client)
+    analysis = SimpleNamespace(
+        id=1,
+        filename="scores.csv",
+        analysis_type="dataset",
+        row_count=2,
+        column_count=2,
+        summary="Iki satirlik test verisi",
+        statistics='{"descriptive": []}',
+        quality_issues="[]",
+    )
+
+    prompt, content = ai_analyst.generate_report_from_analyses([analysis])
+
+    assert analysis.filename in prompt
+    assert content == "Test Gemini raporu"
+    assert fake_client.models.calls == [
+        {"model": ai_analyst.MODEL, "contents": prompt}
+    ]
 
 
 def test_register_rejects_duplicate_email():
@@ -338,6 +375,71 @@ def test_upload_dataset_detects_survey_and_returns_survey_summary():
     assert body["charts"]
 
 
+def test_survey_research_builds_dynamic_question_scores_and_demographics(monkeypatch):
+    headers = _auth_headers("survey-research@example.com")
+    csv_content = "\n".join(
+        [
+            "ANKET ADI: SPOR ETKINLIGI MEMNUNIYET ANKETI;;;;;;;",
+            'KODLARKEN;Metin;"K": Kadin | "E": Erkek;Sayi;"1": Hic Memnun Degilim | "2": Memnun Degilim | "3": Kararsiz | "4": Memnunum | "5": Cok Memnunum;"1": Hic Memnun Degilim | "2": Memnun Degilim | "3": Kararsiz | "4": Memnunum | "5": Cok Memnunum;;;',
+            "No.;Mahalle;Cinsiyet;Yas;1. Katilimdan genel olarak memnuniyetinizi belirtir misiniz?;2. Organizasyon memnuniyetinizi belirtir misiniz? Ortam;;;",
+            "1;Konak;K;17;5;4;;;",
+            "2;KONAK;E;18;4;5;;;",
+            "3;23 Nisan;K;25;3;3;;;",
+            "4;23 nisan;K;65;5;5;;;",
+            "5;2026-01-30;E;70;5;5;;;",
+            "6;;;;;;;",
+        ]
+    ).encode("utf-8")
+
+    upload = client.post(
+        "/datasets/upload",
+        headers=headers,
+        files={"file": ("research-survey.csv", csv_content, "text/csv")},
+    )
+
+    assert upload.status_code == 201
+    assert upload.json()["column_count"] == 6
+    survey_id = upload.json()["survey_id"]
+    research = client.get(f"/surveys/{survey_id}/research", headers=headers)
+
+    assert research.status_code == 200
+    body = research.json()
+    assert body["title"] == "SPOR ETKINLIGI MEMNUNIYET ANKETI"
+    assert body["response_count"] == 6
+    assert body["scored_response_count"] == 5
+    assert body["overall_score_100"] == 88.0
+    assert [item["label"] for item in body["question_scores"]] == [
+        "Genel memnuniyet",
+        "Ortam",
+    ]
+    assert [item["score_100"] for item in body["question_scores"]] == [88.0, 88.0]
+    assert {item["label"]: item["respondent_count"] for item in body["gender_scores"]} == {
+        "Kadın": 3,
+        "Erkek": 2,
+    }
+    assert {item["label"] for item in body["age_scores"]} == {
+        "18 yaş altı",
+        "18-24",
+        "25-34",
+        "65+",
+    }
+    neighborhoods = {item["label"]: item for item in body["neighborhood_scores"]}
+    assert neighborhoods["Konak"]["respondent_count"] == 2
+    assert neighborhoods["23 Nisan"]["respondent_count"] == 2
+    assert any(issue["type"] == "invalid_neighborhood" for issue in body["quality_issues"])
+
+    refreshed = client.post(f"/surveys/{survey_id}/research/refresh", headers=headers)
+    assert refreshed.status_code == 200
+    assert refreshed.json()["report_id"] == body["report_id"]
+
+    monkeypatch.setattr("ai_analyst.GEMINI_API_KEY", "")
+    ai_summary = client.post(f"/surveys/{survey_id}/research/ai-summary", headers=headers)
+    assert ai_summary.status_code == 200
+    assert ai_summary.json()["ai_report"] is None
+    assert ai_summary.json()["ai_report_status"] == "skipped"
+    assert ai_summary.json()["scored_response_count"] == 5
+
+
 def test_upload_dataset_rejects_unsupported_file_type():
     headers = _auth_headers("unsupported-dataset@example.com")
     response = client.post(
@@ -346,6 +448,221 @@ def test_upload_dataset_rejects_unsupported_file_type():
         files={"file": ("dataset.txt", b"hello", "text/plain")},
     )
     assert response.status_code == 400
+
+
+def test_dataset_id_creates_multiple_independent_analyses(monkeypatch):
+    headers = _auth_headers("dataset-analysis@example.com")
+    monkeypatch.setattr("ai_analyst.GEMINI_API_KEY", "")
+    upload = client.post(
+        "/datasets/upload",
+        headers=headers,
+        files={"file": ("scores.csv", b"city,score\nAnkara,10\nIzmir,20\n", "text/csv")},
+    )
+    assert upload.status_code == 201
+    dataset_id = upload.json()["dataset_id"]
+
+    first = client.post(
+        f"/datasets/{dataset_id}/analyses",
+        headers=headers,
+        json={"template": "general", "question": "Ilk inceleme"},
+    )
+    second = client.post(
+        f"/datasets/{dataset_id}/analyses",
+        headers=headers,
+        json={"template": "general", "question": "Ikinci inceleme"},
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["id"] != second.json()["id"]
+    assert first.json()["dataset_id"] == dataset_id
+    assert first.json()["statistics"]
+    assert first.json()["ai_report_status"] == "skipped"
+
+
+def test_dataset_id_analysis_is_user_scoped():
+    owner_headers = _auth_headers("dataset-analysis-owner@example.com")
+    upload = client.post(
+        "/datasets/upload",
+        headers=owner_headers,
+        files={"file": ("scores.csv", b"city,score\nAnkara,10\n", "text/csv")},
+    )
+    assert upload.status_code == 201
+
+    other_headers = _auth_headers("dataset-analysis-other@example.com")
+    response = client.post(
+        f"/datasets/{upload.json()['dataset_id']}/analyses",
+        headers=other_headers,
+        json={},
+    )
+    assert response.status_code == 404
+
+
+def test_survey_detection_reuses_uploaded_dataset_and_is_idempotent():
+    headers = _auth_headers("survey-detection@example.com")
+    csv_content = "\n".join(
+        [
+            "ANKET ADI: BIRIM MEMNUNIYET ANKETI;;;;",
+            'KODLARKEN DIKKAT EDINIZ!;Tarih;"1": Hayir | "2": Evet;Metin',
+            "No.;Tarih;1. Hizmetten memnun musunuz?;Gorus ve Oneriler",
+            "1;2026-01-01;2;Iyi",
+            "2;2026-01-02;1;",
+        ]
+    ).encode("utf-8")
+    upload = client.post(
+        "/datasets/upload",
+        headers=headers,
+        files={"file": ("survey.csv", csv_content, "text/csv")},
+    )
+    assert upload.status_code == 201
+    dataset_id = upload.json()["dataset_id"]
+    survey_id = upload.json()["survey_id"]
+
+    response = client.post(f"/datasets/{dataset_id}/detect-survey", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "already_detected"
+    assert response.json()["survey_id"] == survey_id
+
+
+def test_survey_detection_handles_non_survey_and_missing_source_file():
+    headers = _auth_headers("survey-detection-general@example.com")
+    upload = client.post(
+        "/datasets/upload",
+        headers=headers,
+        files={"file": ("general.csv", b"city,score\nAnkara,10\nIzmir,20\n", "text/csv")},
+    )
+    assert upload.status_code == 201
+    dataset_id = upload.json()["dataset_id"]
+
+    not_survey = client.post(f"/datasets/{dataset_id}/detect-survey", headers=headers)
+    assert not_survey.status_code == 200
+    assert not_survey.json()["detected"] is False
+    assert not_survey.json()["status"] == "not_survey"
+
+    db = SessionLocal()
+    try:
+        db.query(models.DatasetFile).filter(models.DatasetFile.dataset_id == dataset_id).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    missing_source = client.post(f"/datasets/{dataset_id}/detect-survey", headers=headers)
+    assert missing_source.status_code == 409
+
+
+def test_dataset_comparison_uses_existing_dataset_ids(monkeypatch):
+    headers = _auth_headers("dataset-comparison@example.com")
+    monkeypatch.setattr("ai_analyst.GEMINI_API_KEY", "")
+
+    def upload(filename: str, content: bytes) -> int:
+        response = client.post(
+            "/datasets/upload",
+            headers=headers,
+            files={"file": (filename, content, "text/csv")},
+        )
+        assert response.status_code == 201
+        return response.json()["dataset_id"]
+
+    first_id = upload("first.csv", b"city,score\nAnkara,10\nIzmir,20\n")
+    second_id = upload("second.csv", b"city,score\nAnkara,15\nIzmir,30\n")
+    response = client.post(
+        "/dataset-comparisons",
+        headers=headers,
+        json={"dataset_ids": [first_id, second_id]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["file1"] == "first.csv"
+    assert "Gemini API anahtarı" in response.json()["ai_report"]
+
+
+def test_analyze_data_skips_ai_report_without_gemini_key(monkeypatch):
+    headers = _auth_headers("analyze-no-key@example.com")
+    monkeypatch.setattr("ai_analyst.GEMINI_API_KEY", "")
+
+    def unexpected_ai_call(*_args, **_kwargs):
+        raise AssertionError("Gemini cagrisi yapilmamali")
+
+    monkeypatch.setattr("main.strategic_analysis", unexpected_ai_call)
+    response = client.post(
+        "/analyze/data",
+        headers=headers,
+        files={"file": ("scores.csv", b"city,score\nAnkara,10\nIzmir,20\n", "text/csv")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["statistics"]
+    assert body["ai_report"] is None
+    assert body["ai_report_status"] == "skipped"
+    assert body["ai_report_warning"] == (
+        "Gemini API anahtarı yapılandırılmadığı için AI raporu oluşturulmadı."
+    )
+
+    db = SessionLocal()
+    try:
+        record = db.query(models.DataAnalysis).filter(models.DataAnalysis.id == body["id"]).one()
+        assert record.status == "completed"
+        assert record.ai_report is None
+        assert record.ai_report_status == "skipped"
+    finally:
+        db.close()
+
+    detail = client.get(f"/analyses/{body['id']}", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["ai_report_status"] == "skipped"
+    assert detail.json()["ai_report_warning"] == body["ai_report_warning"]
+
+
+def test_analyze_data_keeps_successful_gemini_behavior(monkeypatch):
+    headers = _auth_headers("analyze-with-key@example.com")
+    monkeypatch.setattr("ai_analyst.GEMINI_API_KEY", "configured-key")
+
+    def fake_strategic_analysis(*_args, **_kwargs):
+        return "Gemini analiz raporu"
+
+    monkeypatch.setattr("main.strategic_analysis", fake_strategic_analysis)
+    response = client.post(
+        "/analyze/data",
+        headers=headers,
+        files={"file": ("scores.csv", b"city,score\nAnkara,10\nIzmir,20\n", "text/csv")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ai_report"] == "Gemini analiz raporu"
+    assert body["ai_report_status"] == "completed"
+    assert body["ai_report_warning"] is None
+
+
+def test_analyze_data_preserves_analysis_when_gemini_fails(monkeypatch):
+    headers = _auth_headers("analyze-service-failure@example.com")
+    monkeypatch.setattr("ai_analyst.GEMINI_API_KEY", "configured-key")
+
+    def failing_strategic_analysis(*_args, **_kwargs):
+        raise RuntimeError("Gemini unavailable")
+
+    monkeypatch.setattr("main.strategic_analysis", failing_strategic_analysis)
+    response = client.post(
+        "/analyze/data",
+        headers=headers,
+        files={"file": ("scores.csv", b"city,score\nAnkara,10\nIzmir,20\n", "text/csv")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["statistics"]
+    assert body["ai_report"] is None
+    assert body["ai_report_status"] == "failed"
+    assert body["ai_report_warning"] == "Gemini servisi kullanilamadigi icin AI raporu olusturulamadi."
+
+    db = SessionLocal()
+    try:
+        record = db.query(models.DataAnalysis).filter(models.DataAnalysis.id == body["id"]).one()
+        assert record.status == "completed"
+        assert record.ai_report_status == "failed"
+    finally:
+        db.close()
 
 
 def test_upload_survey_csv_returns_dataset_questions_quality_and_summary():

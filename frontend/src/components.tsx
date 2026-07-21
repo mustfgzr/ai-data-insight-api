@@ -1,7 +1,10 @@
 import { BarChart3, FileSpreadsheet, FileText, LayoutDashboard, LogOut, Upload, X } from "lucide-react";
 import { Link, NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "./auth";
-import type { ChartPayload } from "./types";
+import { Bar, BarChart, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import type { ChartPayload, SurveyResearchChart } from "./types";
+
+const CHART_COLORS = ["#168a7a", "#447fba", "#e0a13d", "#c9665c", "#8a6cb5", "#5d9d69", "#b56d91"];
 
 export function AppShell() {
   const { user, signOut } = useAuth();
@@ -63,5 +66,17 @@ export function MiniBarChart({ chart }: { chart: ChartPayload }) {
     {visible.map((item) => <div className="chart-row" key={item.label}>
       <span title={item.label}>{item.label}</span><div className="chart-track"><i style={{ width: `${Math.max((item.value / max) * 100, 2)}%` }} /></div><b>{item.value}</b>
     </div>)}
+  </div></section>;
+}
+
+export function SurveyResearchChart({ chart }: { chart: SurveyResearchChart }) {
+  const data = chart.data.filter((item) => typeof item.value === "number");
+  if (data.length === 0) return null;
+  const valueLabel = chart.unit === "score_100" ? "Skor" : "Katilimci";
+  return <section className="research-chart"><h3>{chart.title}</h3><p>{chart.unit === "score_100" ? "100 uzerinden memnuniyet skoru" : "Katilimci dagilimi"}</p><div className="research-chart-canvas">
+    <ResponsiveContainer width="100%" height={250}>
+      {chart.type === "donut" ? <PieChart><Pie data={data} dataKey="value" nameKey="label" innerRadius={52} outerRadius={82} paddingAngle={2}>{data.map((item, index) => <Cell key={item.label} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Pie><Tooltip /><Legend /></PieChart>
+        : <BarChart data={data} margin={{ top: 8, right: 12, left: -18, bottom: 18 }}><XAxis dataKey="label" interval={0} angle={data.length > 5 ? -22 : 0} textAnchor={data.length > 5 ? "end" : "middle"} height={data.length > 5 ? 55 : 30} tick={{ fontSize: 11 }} /><YAxis domain={chart.unit === "score_100" ? [0, 100] : [0, "auto"]} tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="value" name={valueLabel} fill="#168a7a" radius={[3, 3, 0, 0]} /></BarChart>}
+    </ResponsiveContainer>
   </div></section>;
 }

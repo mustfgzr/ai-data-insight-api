@@ -22,11 +22,18 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 MODEL = "gemini-3.1-flash-lite"
+GEMINI_NOT_CONFIGURED_WARNING = (
+    "Gemini API anahtarı yapılandırılmadığı için AI raporu oluşturulmadı."
+)
+
+
+def is_gemini_configured() -> bool:
+    return bool(GEMINI_API_KEY.strip())
 
 
 def _get_client() -> genai.Client:
     """Gemini istemcisini uygulama acilisindan bagimsiz olarak olusturur."""
-    if not GEMINI_API_KEY:
+    if not is_gemini_configured():
         raise RuntimeError("GEMINI_API_KEY ayarlanmadan AI raporlari olusturulamaz")
     return genai.Client(api_key=GEMINI_API_KEY)
 
@@ -75,7 +82,25 @@ ANALİZ ÖZETLERİ:
     if question:
         prompt += f"\n\nKULLANICININ ODAK SORUSU:\n{question}"
 
-    response = _get_client().models.generate_content(model=MODEL, contents=prompt)
+    client = _get_client()
+    response = client.models.generate_content(model=MODEL, contents=prompt)
+    return prompt, response.text.strip()
+
+
+def generate_survey_research_summary(research: dict[str, object]) -> tuple[str, str]:
+    """Creates an optional narrative from saved survey research metrics only."""
+    prompt = f"""Sen kıdemli bir araştırma analistisin. Aşağıdaki yapılandırılmış anket araştırma verilerinden Türkçe, kısa ve açıklayıcı bir yönetici özeti hazırla.
+
+Kurallar:
+- Sadece verilen sayısal sonuçlara dayan; ham katılımcı verisi yoktur.
+- Düşük örneklemli gruplar için kesin yargı kurma.
+- Şu başlıkları kullan: Genel Sonuç, Soru Bulguları, Sosyo-Demografik Bulgular, Mahalle Bulguları, Veri Kalitesi, Öneriler.
+
+ARAŞTIRMA VERİSİ:
+{json.dumps(research, ensure_ascii=False, default=str)}"""
+
+    client = _get_client()
+    response = client.models.generate_content(model=MODEL, contents=prompt)
     return prompt, response.text.strip()
 
 
@@ -102,7 +127,8 @@ def strategic_analysis(
     prompt = template.build_prompt(ingested, stats, question)
 
     # Gemini'a gönder
-    response = _get_client().models.generate_content(
+    client = _get_client()
+    response = client.models.generate_content(
         model=MODEL,
         contents=prompt,
     )
@@ -187,7 +213,8 @@ KULLANICININ SORUSU:
 
 Yukarıdaki bölümlere ek olarak, bu soruyu "6. KULLANICI SORUSUNA YANIT" başlığında yanıtla."""
 
-    response = _get_client().models.generate_content(model=MODEL, contents=prompt)
+    client = _get_client()
+    response = client.models.generate_content(model=MODEL, contents=prompt)
     return response.text.strip()
 
 
@@ -240,7 +267,8 @@ Yanıtını şu şekilde yapılandır:
 2. DESTEKLEYEN VERİ: Yanıtı destekleyen sayısal kanıtlar
 3. EK NOTLAR: Soruyla ilgili dikkat çekmek istediğin ek bilgiler"""
 
-    response = _get_client().models.generate_content(model=MODEL, contents=prompt)
+    client = _get_client()
+    response = client.models.generate_content(model=MODEL, contents=prompt)
     return response.text.strip()
 
 

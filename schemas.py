@@ -57,7 +57,9 @@ class DataAnalysisResponse(BaseModel):
     column_count: int
     columns_info: Any       # JSON parse edilmiş sütun bilgileri
     statistics: Any          # JSON parse edilmiş istatistikler
-    ai_report: str           # Gemini stratejik rapor
+    ai_report: Optional[str] = None
+    ai_report_status: str = "completed"
+    ai_report_warning: Optional[str] = None
     dataset_id: Optional[int] = None
     analysis_type: str = "dataset"
     status: str = "completed"
@@ -114,6 +116,7 @@ class SurveyQuestionItem(BaseModel):
     column_name: str
     question_no: Optional[str] = None
     question_text: str
+    display_label: str
     question_type: str
     scale_type: Optional[str] = None
     options: dict[str, Any] = Field(default_factory=dict)
@@ -129,7 +132,57 @@ class SurveyReportItem(BaseModel):
     summary: Any
     metrics: Any
     quality_issues: Any
-    ai_report: str
+    ai_report: str = ""
+    ai_report_status: str = "not_requested"
+    ai_report_warning: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class SurveyQuestionScore(BaseModel):
+    question_id: int
+    question_no: Optional[str] = None
+    label: str
+    question_text: str
+    score_100: Optional[float] = None
+    response_count: int
+    missing_count: int
+    missing_pct: float
+    distribution: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SurveyGroupScore(BaseModel):
+    label: str
+    score_100: Optional[float] = None
+    respondent_count: int
+    low_sample: bool = False
+
+
+class SurveyChartItem(BaseModel):
+    id: str
+    type: str
+    title: str
+    unit: str
+    data: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SurveyResearchResponse(BaseModel):
+    survey_id: int
+    report_id: int
+    title: str
+    status: str
+    response_count: int
+    scored_response_count: int
+    likert_question_count: int
+    overall_score_100: Optional[float] = None
+    question_scores: list[SurveyQuestionScore] = Field(default_factory=list)
+    gender_scores: list[SurveyGroupScore] = Field(default_factory=list)
+    age_scores: list[SurveyGroupScore] = Field(default_factory=list)
+    neighborhood_scores: list[SurveyGroupScore] = Field(default_factory=list)
+    charts: list[SurveyChartItem] = Field(default_factory=list)
+    quality_issues: list[dict[str, Any]] = Field(default_factory=list)
+    ai_report: Optional[str] = None
+    ai_report_status: str = "not_requested"
+    ai_report_warning: Optional[str] = None
     created_at: Optional[datetime] = None
 
 
@@ -199,6 +252,35 @@ class DatasetRowsResponse(BaseModel):
     limit: int
     total: int
     rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DatasetAnalysisCreate(BaseModel):
+    template: str = Field(default="general", min_length=1, max_length=80)
+    question: Optional[str] = Field(default=None, max_length=2_000)
+
+
+class DatasetComparisonCreate(BaseModel):
+    dataset_ids: list[int] = Field(min_length=2, max_length=2)
+    question: Optional[str] = Field(default=None, max_length=2_000)
+
+    @field_validator("dataset_ids")
+    @classmethod
+    def dataset_ids_are_unique(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("Karsilastirma icin iki farkli dataset secin")
+        return value
+
+
+class DatasetQuestionCreate(BaseModel):
+    question: str = Field(min_length=1, max_length=2_000)
+
+
+class SurveyDetectionResponse(BaseModel):
+    dataset_id: int
+    detected: bool
+    status: str
+    survey_id: Optional[int] = None
+    message: Optional[str] = None
 
 
 class ReportCreate(BaseModel):
