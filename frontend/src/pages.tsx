@@ -107,13 +107,7 @@ export function SurveyResearchPage() {
   if (!research) return <Loading />;
   return <div className="page"><PageHeader title={research.title} detail="Sayisal anket arastirmasi. AI ozeti istege bagli ve bu hesaplamalardan ayri tutulur." actions={<div className="header-actions"><button className="secondary-button" onClick={refresh} disabled={pending}>{pending && <LoaderCircle className="spin" size={16} />}Yenile</button><button className="primary-button" onClick={createAiSummary} disabled={pending}>{pending && <LoaderCircle className="spin" size={16} />}<Sparkles size={16} />AI ozeti olustur</button></div>} />
     {error && <ErrorNotice message={error} onDismiss={() => setError("")} />}
-    <section className="metric-grid top-metrics"><Metric label="Toplam yanit" value={research.response_count} /><Metric label="Puanlanabilir" value={research.scored_response_count} /><Metric label="Likert sorusu" value={research.likert_question_count} /><Metric label="Genel skor" value={research.overall_score_100 === null || research.overall_score_100 === undefined ? "-" : `${formatScore(research.overall_score_100)} / 100`} /></section>
-    <section><h2>Soru bazli memnuniyet</h2>{research.question_scores.length ? <div className="data-table-wrap"><table className="data-table research-table"><thead><tr><th>Soru</th><th>100 uzerinden skor</th><th>Yanit</th><th>Eksik</th></tr></thead><tbody>{research.question_scores.map((question) => <tr key={question.question_id}><td><strong>{question.label}</strong>{question.label !== question.question_text && <small>{question.question_text}</small>}</td><td><strong>{formatScore(question.score_100)}</strong></td><td>{question.response_count}</td><td>{question.missing_count} <span className="muted">(%{formatScore(question.missing_pct)})</span></td></tr>)}</tbody></table></div> : <p className="muted">Bu ankette 100 uzerinden puanlanabilir Likert sorusu bulunamadi.</p>}</section>
-    <section><h2>Sosyo-demografik bulgular</h2><div className="research-grid">{research.charts.filter((chart) => chart.id === "gender-distribution" || chart.id === "gender-satisfaction" || chart.id === "age-distribution" || chart.id === "age-satisfaction").map((chart) => <SurveyResearchChart key={chart.id} chart={chart} />)}</div></section>
-    <section className="split-section"><div><h2>Cinsiyet bazli memnuniyet</h2><GroupScoreTable groups={research.gender_scores} /></div><div><h2>Yas bazli memnuniyet</h2><GroupScoreTable groups={research.age_scores} /></div></section>
-    <section><h2>Mahalle bazli memnuniyet</h2><div className="research-grid">{research.charts.filter((chart) => chart.id === "neighborhood-satisfaction").map((chart) => <SurveyResearchChart key={chart.id} chart={chart} />)}</div><GroupScoreTable groups={research.neighborhood_scores} /></section>
-    {research.quality_issues.length > 0 && <section><h2>Veri kalite notlari</h2><div className="issue-grid">{research.quality_issues.map((issue, index) => <article className="issue-card" key={index}><StatusPill value={issue.severity} /><p>{String(issue.message ?? JSON.stringify(issue))}</p></article>)}</div></section>}
-    <section><h2>AI ozeti</h2>{research.ai_report ? <article className="report-content">{research.ai_report.split("\n").map((line, index) => line.trim() ? <p key={index}>{line}</p> : <br key={index} />)}</article> : <div className="summary-block"><p>{research.ai_report_warning || "AI ozeti henuz istenmedi. Sayisal arastirma analizi yukarida kullanima hazirdir."}</p></div>}</section>
+    <SurveyResearchContent research={research} />
   </div>;
 }
 
@@ -129,17 +123,50 @@ export function AnalysesPage() {
 }
 
 export function AnalysisDetailPage() {
-  const { id } = useParams(); const analysisId = Number(id); const { token } = useAuth(); const [analysis, setAnalysis] = useState<AnalysisDetail | null>(null); const [error, setError] = useState("");
+  const { id } = useParams(); const analysisId = Number(id); const { token } = useAuth(); const [analysis, setAnalysis] = useState<AnalysisDetail | null>(null); const [error, setError] = useState(""); const [surveyId, setSurveyId] = useState<number | null>(null); const [research, setResearch] = useState<SurveyResearch | null>(null); const [researchError, setResearchError] = useState(""); const [researchLoading, setResearchLoading] = useState(false);
   useEffect(() => { if (!token || !analysisId) return; api.analysis(analysisId, token).then(setAnalysis).catch((err) => setError(loadError(err))); }, [token, analysisId]);
+  useEffect(() => {
+    if (!token || !analysis) return;
+    if (!analysis.dataset_id) {
+      setSurveyId(null); setResearch(null); setResearchError(""); setResearchLoading(false);
+      return;
+    }
+    let active = true;
+    setSurveyId(null); setResearch(null); setResearchError(""); setResearchLoading(true);
+    api.dataset(analysis.dataset_id, token)
+      .then((dataset) => {
+        if (!active) return null;
+        setSurveyId(dataset.survey_id ?? null);
+        return dataset.survey_id ? api.surveyResearch(dataset.survey_id, token) : null;
+      })
+      .then((result) => { if (active && result) setResearch(result); })
+      .catch((err) => { if (active) setResearchError(loadError(err)); })
+      .finally(() => { if (active) setResearchLoading(false); });
+    return () => { active = false; };
+  }, [token, analysis?.dataset_id]);
   if (error) return <div className="page"><ErrorNotice message={error} /><Link className="secondary-button" to="/analyses">Listeye don</Link></div>;
   if (!analysis) return <Loading />;
-  return <div className="page"><PageHeader title={`Analiz #${analysis.id}`} detail={analysis.filename} actions={analysis.dataset_id ? <Link className="secondary-button" to={`/datasets/${analysis.dataset_id}`}>Veri setine git</Link> : undefined} />
+  const showGenericCharts = !analysis.dataset_id || (!researchLoading && surveyId === null);
+  return <div className="page"><PageHeader title={`Analiz #${analysis.id}`} detail={analysis.filename} actions={<div className="header-actions">{surveyId && <Link className="primary-button" to={`/surveys/${surveyId}/research`}><BarChart3 size={16} />Tam arastirmayi ac</Link>}{analysis.dataset_id && <Link className="secondary-button" to={`/datasets/${analysis.dataset_id}`}>Veri setine git</Link>}</div>} />
     <section className="metric-grid top-metrics"><Metric label="Satir" value={analysis.row_count} /><Metric label="Kolon" value={analysis.column_count} /><Metric label="Durum" value={analysis.status || "tamamlandi"} /><Metric label="Uyari" value={analysis.quality_issues.length} /></section>
     <section className="summary-block"><h2>Otomatik ozet</h2><p>{analysis.summary || "Bu analiz icin ozet bulunamadi."}</p></section>
+    {surveyId && <section><h2>Anket arastirmasi</h2>{researchLoading ? <Loading /> : research ? <SurveyResearchContent research={research} /> : <div className="summary-block"><p>{researchError || "Bu anket icin arastirma sonucu bulunamadi."}</p><Link className="secondary-button" to={`/surveys/${surveyId}/research`}>Arastirma sayfasini ac</Link></div>}</section>}
     {analysis.quality_issues.length > 0 && <section><h2>Veri kalite uyarilari</h2><div className="issue-grid">{analysis.quality_issues.map((issue, index) => <article className="issue-card" key={index}><StatusPill value={issue.severity} /><h3>{String(issue.title ?? issue.column ?? "Kontrol")}</h3><p>{String(issue.message ?? JSON.stringify(issue))}</p></article>)}</div></section>}
-    {analysis.chart_data.length > 0 && <section><h2>Grafik verileri</h2><div className="chart-grid">{analysis.chart_data.map((chart, index) => <MiniBarChart key={index} chart={chart} />)}</div></section>}
+    {showGenericCharts && analysis.chart_data.length > 0 && <section><h2>Grafik verileri</h2><div className="chart-grid">{analysis.chart_data.map((chart, index) => <MiniBarChart key={index} chart={chart} />)}</div></section>}
     <section><h2>Kolon metadatasi</h2><div className="data-table-wrap"><table className="data-table"><thead><tr><th>Kolon</th><th>Tip</th><th>Anlam</th><th>Eksik</th><th>Benzersiz</th></tr></thead><tbody>{analysis.columns_info.map((column) => <tr key={column.name}><td><strong>{column.name}</strong></td><td>{column.dtype}</td><td>{column.semantic_type}</td><td>{column.missing_pct?.toFixed?.(1) ?? 0}%</td><td>{column.unique_count}</td></tr>)}</tbody></table></div></section>
   </div>;
+}
+
+function SurveyResearchContent({ research }: { research: SurveyResearch }) {
+  return <>
+    <section className="metric-grid top-metrics"><Metric label="Toplam yanit" value={research.response_count} /><Metric label="Puanlanabilir" value={research.scored_response_count} /><Metric label="Likert sorusu" value={research.likert_question_count} /><Metric label="Genel skor" value={research.overall_score_100 === null || research.overall_score_100 === undefined ? "-" : `${formatScore(research.overall_score_100)} / 100`} /></section>
+    <section><h2>Soru bazli memnuniyet</h2>{research.question_scores.length ? <div className="data-table-wrap"><table className="data-table research-table"><thead><tr><th>Soru</th><th>100 uzerinden skor</th><th>Yanit</th><th>Eksik</th></tr></thead><tbody>{research.question_scores.map((question) => <tr key={question.question_id}><td><strong>{question.label}</strong>{question.label !== question.question_text && <small>{question.question_text}</small>}</td><td><strong>{formatScore(question.score_100)}</strong></td><td>{question.response_count}</td><td>{question.missing_count} <span className="muted">(%{formatScore(question.missing_pct)})</span></td></tr>)}</tbody></table></div> : <p className="muted">Bu ankette 100 uzerinden puanlanabilir Likert sorusu bulunamadi.</p>}</section>
+    <section><h2>Sosyo-demografik bulgular</h2><div className="research-grid">{research.charts.filter((chart) => chart.id === "gender-distribution" || chart.id === "gender-satisfaction" || chart.id === "age-distribution" || chart.id === "age-satisfaction").map((chart) => <SurveyResearchChart key={chart.id} chart={chart} />)}</div></section>
+    <section className="split-section"><div><h2>Cinsiyet bazli memnuniyet</h2><GroupScoreTable groups={research.gender_scores} /></div><div><h2>Yas bazli memnuniyet</h2><GroupScoreTable groups={research.age_scores} /></div></section>
+    <section><h2>Mahalle bazli memnuniyet</h2><div className="research-grid">{research.charts.filter((chart) => chart.id === "neighborhood-satisfaction").map((chart) => <SurveyResearchChart key={chart.id} chart={chart} />)}</div><GroupScoreTable groups={research.neighborhood_scores} /></section>
+    {research.quality_issues.length > 0 && <section><h2>Veri kalite notlari</h2><div className="issue-grid">{research.quality_issues.map((issue, index) => <article className="issue-card" key={index}><StatusPill value={issue.severity} /><p>{String(issue.message ?? JSON.stringify(issue))}</p></article>)}</div></section>}
+    <section><h2>AI ozeti</h2>{research.ai_report ? <article className="report-content">{research.ai_report.split("\n").map((line, index) => line.trim() ? <p key={index}>{line}</p> : <br key={index} />)}</article> : <div className="summary-block"><p>{research.ai_report_warning || "AI ozeti henuz istenmedi. Sayisal arastirma analizi yukarida kullanima hazirdir."}</p></div>}</section>
+  </>;
 }
 
 export function ReportsPage() {
