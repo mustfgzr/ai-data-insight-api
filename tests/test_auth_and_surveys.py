@@ -767,12 +767,37 @@ def test_roles_departments_and_administrative_read_access(monkeypatch):
         "/datasets/upload",
         headers=analyst_a,
         data={"department_id": str(department_id)},
-        files={"file": ("admin-scope.csv", b"city,score\nAnkara,10\n", "text/csv")},
+        files={
+            "file": (
+                "admin-scope.csv",
+                b"ANKET ADI: YONETICI TEST ANKETI;;;;\n"
+                b"KODLARKEN DIKKAT EDINIZ!;Tarih;\"1\": Memnun Degilim | \"2\": Memnunum;Metin\n"
+                b"No.;Tarih;1. Hizmetten memnun musunuz?;Gorus ve Oneriler\n"
+                b"1;2026-01-01;2;Iyi\n2;2026-01-02;1;\n",
+                "text/csv",
+            )
+        },
     )
     assert upload.status_code == 201
     dataset_id = upload.json()["dataset_id"]
     analysis_id = upload.json()["analysis_id"]
+    survey_id = upload.json()["survey_id"]
+    assert survey_id is not None
+    monkeypatch.setattr(
+        "report_service.generate_report_from_analyses",
+        lambda _analyses, _question: ("Yonetici test promptu", "Yonetici tarafindan okunabilen rapor"),
+    )
+    report_response = client.post(
+        "/reports",
+        headers=analyst_a,
+        json={"analysis_ids": [analysis_id], "department_id": department_id},
+    )
+    assert report_response.status_code == 201
+    report_id = report_response.json()["id"]
     assert client.get(f"/datasets/{dataset_id}", headers=analyst_b).status_code == 404
+    assert client.get(f"/analyses/{analysis_id}", headers=analyst_b).status_code == 404
+    assert client.get(f"/surveys/{survey_id}/research", headers=analyst_b).status_code == 404
+    assert client.get(f"/reports/{report_id}", headers=analyst_b).status_code == 404
     assert client.post(f"/datasets/{dataset_id}/analyses", headers=analyst_b, json={}).status_code == 404
     assert client.post(
         "/reports",
@@ -803,6 +828,10 @@ def test_roles_departments_and_administrative_read_access(monkeypatch):
     admin_datasets = client.get(f"/admin/analysts/{analyst_a_id}/datasets?department_id={department_id}", headers=admin_headers)
     assert admin_datasets.status_code == 200
     assert any(item["id"] == dataset_id for item in admin_datasets.json()["items"])
+    assert client.get(f"/datasets/{dataset_id}", headers=admin_headers).status_code == 200
+    assert client.get(f"/analyses/{analysis_id}", headers=admin_headers).status_code == 200
+    assert client.get(f"/surveys/{survey_id}/research", headers=admin_headers).status_code == 200
+    assert client.get(f"/reports/{report_id}", headers=admin_headers).status_code == 200
     assert client.post(
         "/datasets/upload",
         headers=admin_headers,

@@ -21,7 +21,7 @@ export function AppShell() {
 
   return <div className="app-frame">
     <aside className="sidebar">
-      <Link className="brand" to="/datasets"><LayoutDashboard size={23} /><span>Data Insight</span></Link>
+      <Link className="brand" to={user?.role === "admin" ? "/admin" : "/datasets"}><LayoutDashboard size={23} /><span>Data Insight</span></Link>
       <nav aria-label="Ana menu">
         {nav.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>
           <Icon size={18} /><span>{label}</span>

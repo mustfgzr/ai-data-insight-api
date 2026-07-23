@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { BarChart3, Download, FilePlus2, FileText, LoaderCircle, Plus, Sparkles, UploadCloud } from "lucide-react";
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "./api";
 import { useAuth } from "./auth";
 import { useDepartment } from "./department";
 import { EmptyState, ErrorNotice, MiniBarChart, PageHeader, StatusPill, SurveyResearchChart } from "./components";
-import type { AnalysisDetail, AnalysisListItem, DatasetDetail, DatasetListItem, DatasetRows, DatasetUpload, ReportDetail, ReportListItem, SurveyGroupScore, SurveyListItem, SurveyResearch } from "./types";
+import type { AdminAnalyst, AnalysisDetail, AnalysisListItem, DatasetDetail, DatasetListItem, DatasetRows, DatasetUpload, Department, ReportDetail, ReportListItem, SurveyGroupScore, SurveyListItem, SurveyResearch } from "./types";
 
 const formatDate = (value?: string) => value ? new Intl.DateTimeFormat("tr-TR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
 const formatValue = (value: unknown) => value === null || value === undefined || value === "" ? "-" : typeof value === "object" ? JSON.stringify(value) : String(value);
@@ -92,15 +92,15 @@ export function DatasetsPage() {
 }
 
 export function DatasetDetailPage() {
-  const { id } = useParams(); const datasetId = Number(id); const { token } = useAuth(); const [dataset, setDataset] = useState<DatasetDetail | null>(null); const [rows, setRows] = useState<DatasetRows | null>(null); const [error, setError] = useState(""); const [actionError, setActionError] = useState(""); const [actionMessage, setActionMessage] = useState(""); const [actionPending, setActionPending] = useState(false); const navigate = useNavigate();
+  const { id } = useParams(); const datasetId = Number(id); const { token, user } = useAuth(); const location = useLocation(); const adminReturn = (location.state as { adminReturn?: string } | null)?.adminReturn ?? "/admin"; const isAdmin = user?.role === "admin"; const [dataset, setDataset] = useState<DatasetDetail | null>(null); const [rows, setRows] = useState<DatasetRows | null>(null); const [error, setError] = useState(""); const [actionError, setActionError] = useState(""); const [actionMessage, setActionMessage] = useState(""); const [actionPending, setActionPending] = useState(false); const navigate = useNavigate();
   const refresh = () => { if (!token || !datasetId) return; Promise.all([api.dataset(datasetId, token), api.datasetRows(datasetId, 0, token)]).then(([detail, page]) => { setDataset(detail); setRows(page); }).catch((err) => setError(loadError(err))); };
   useEffect(refresh, [token, datasetId]);
   const createAnalysis = async () => { if (!token) return; setActionPending(true); setActionError(""); try { const analysis = await api.analyzeDataset(datasetId, token); navigate(`/analyses/${analysis.id}`); } catch (err) { setActionError(loadError(err)); } finally { setActionPending(false); } };
   const detectSurvey = async () => { if (!token) return; setActionPending(true); setActionError(""); try { const result = await api.detectSurvey(datasetId, token); setActionMessage(result.message || (result.detected ? "Anket algilandi." : "Anket yapisi bulunamadi.")); refresh(); } catch (err) { setActionError(loadError(err)); } finally { setActionPending(false); } };
-  if (error) return <div className="page"><ErrorNotice message={error} /><Link className="secondary-button" to="/datasets">Listeye don</Link></div>;
+  if (error) return <div className="page"><ErrorNotice message={error} /><Link className="secondary-button" to={isAdmin ? adminReturn : "/datasets"}>Listeye don</Link></div>;
   if (!dataset) return <Loading />;
   const headers = rows?.rows.length ? Object.keys(rows.rows[0]) : dataset.columns.map((column) => column.name);
-  return <div className="page"><PageHeader title={dataset.original_filename} detail={`${dataset.row_count} satir, ${dataset.column_count} kolon, ${dataset.detected_format} formati`} actions={<div className="header-actions">{dataset.has_source_file && <a className="secondary-button" href={api.downloadUrl(dataset.id)} target="_blank" rel="noreferrer"><Download size={16} />Kaynak dosya</a>}{dataset.survey_id && <Link className="primary-button" to={`/surveys/${dataset.survey_id}/research`}><BarChart3 size={16} />Anket arastirmasi</Link>}{dataset.latest_analysis_id && <Link className="secondary-button" to={`/analyses/${dataset.latest_analysis_id}`}>Son analiz</Link>}{!dataset.survey_id && <button className="secondary-button" onClick={detectSurvey} disabled={actionPending}>Anket algila</button>}<button className="secondary-button" onClick={createAnalysis} disabled={actionPending}>{actionPending && <LoaderCircle className="spin" size={16} />}Yeni analiz</button></div>} />
+  return <div className="page"><PageHeader title={dataset.original_filename} detail={`${dataset.row_count} satir, ${dataset.column_count} kolon, ${dataset.detected_format} formati`} actions={<div className="header-actions">{isAdmin && <Link className="secondary-button" to={adminReturn}>Yonetici alanina don</Link>}{dataset.has_source_file && <a className="secondary-button" href={api.downloadUrl(dataset.id)} target="_blank" rel="noreferrer"><Download size={16} />Kaynak dosya</a>}{dataset.survey_id && <Link className="primary-button" to={`/surveys/${dataset.survey_id}/research`} state={isAdmin ? { adminReturn } : undefined}><BarChart3 size={16} />Anket arastirmasi</Link>}{dataset.latest_analysis_id && <Link className="secondary-button" to={`/analyses/${dataset.latest_analysis_id}`} state={isAdmin ? { adminReturn } : undefined}>Son analiz</Link>}{!isAdmin && !dataset.survey_id && <button className="secondary-button" onClick={detectSurvey} disabled={actionPending}>Anket algila</button>}{!isAdmin && <button className="secondary-button" onClick={createAnalysis} disabled={actionPending}>{actionPending && <LoaderCircle className="spin" size={16} />}Yeni analiz</button>}</div>} />
     {actionError && <ErrorNotice message={actionError} onDismiss={() => setActionError("")} />}{actionMessage && <p className="muted">{actionMessage}</p>}
     <section className="metric-grid top-metrics"><Metric label="Veri tipi" value={dataset.file_type.toUpperCase()} /><Metric label="Anket" value={dataset.survey_id ? "Algilandi" : "Genel veri"} /><Metric label="Satir" value={dataset.row_count} /><Metric label="Kolon" value={dataset.column_count} /></section>
     <section className="split-section"><div><h2>Kolon yapisi</h2><div className="data-table-wrap"><table className="data-table"><thead><tr><th>Kolon</th><th>Tip</th><th>Anlam</th><th>Eksik</th><th>Benzersiz</th><th>Ornekler</th></tr></thead><tbody>{dataset.columns.map((column) => <tr key={column.name}><td><strong>{column.name}</strong></td><td>{column.dtype}</td><td>{column.semantic_type}</td><td>{column.missing_pct.toFixed(1)}%</td><td>{column.unique_count}</td><td className="sample-cell">{column.sample_values.slice(0, 3).map(formatValue).join(", ") || "-"}</td></tr>)}</tbody></table></div></div></section>
@@ -109,14 +109,14 @@ export function DatasetDetailPage() {
 }
 
 export function SurveyResearchPage() {
-  const { id } = useParams(); const surveyId = Number(id); const { token } = useAuth(); const [research, setResearch] = useState<SurveyResearch | null>(null); const [error, setError] = useState(""); const [pending, setPending] = useState(false);
+  const { id } = useParams(); const surveyId = Number(id); const { token, user } = useAuth(); const location = useLocation(); const adminReturn = (location.state as { adminReturn?: string } | null)?.adminReturn ?? "/admin"; const isAdmin = user?.role === "admin"; const [research, setResearch] = useState<SurveyResearch | null>(null); const [error, setError] = useState(""); const [pending, setPending] = useState(false);
   const load = () => { if (!token || !surveyId) return; api.surveyResearch(surveyId, token).then(setResearch).catch((err) => setError(loadError(err))); };
   useEffect(load, [token, surveyId]);
   const refresh = async () => { if (!token) return; setPending(true); setError(""); try { setResearch(await api.refreshSurveyResearch(surveyId, token)); } catch (err) { setError(loadError(err)); } finally { setPending(false); } };
   const createAiSummary = async () => { if (!token) return; setPending(true); setError(""); try { setResearch(await api.createSurveyAiSummary(surveyId, token)); } catch (err) { setError(loadError(err)); } finally { setPending(false); } };
-  if (error && !research) return <div className="page"><PageHeader title="Anket arastirmasi" detail="Kayitli anket verilerinden sayisal bulgular." actions={<button className="primary-button" onClick={refresh} disabled={pending}>{pending && <LoaderCircle className="spin" size={16} />}Arastirmayi hazirla</button>} /><ErrorNotice message={error} /><Link className="secondary-button" to="/datasets">Veri setlerine don</Link></div>;
+  if (error && !research) return <div className="page"><PageHeader title="Anket arastirmasi" detail="Kayitli anket verilerinden sayisal bulgular." actions={!isAdmin ? <button className="primary-button" onClick={refresh} disabled={pending}>{pending && <LoaderCircle className="spin" size={16} />}Arastirmayi hazirla</button> : undefined} /><ErrorNotice message={error} /><Link className="secondary-button" to={isAdmin ? adminReturn : "/datasets"}>Listeye don</Link></div>;
   if (!research) return <Loading />;
-  return <div className="page"><PageHeader title={research.title} detail="Sayisal anket arastirmasi. AI ozeti istege bagli ve bu hesaplamalardan ayri tutulur." actions={<div className="header-actions"><button className="secondary-button" onClick={refresh} disabled={pending}>{pending && <LoaderCircle className="spin" size={16} />}Yenile</button><button className="primary-button" onClick={createAiSummary} disabled={pending}>{pending && <LoaderCircle className="spin" size={16} />}<Sparkles size={16} />AI ozeti olustur</button></div>} />
+  return <div className="page"><PageHeader title={research.title} detail="Sayisal anket arastirmasi. AI ozeti istege bagli ve bu hesaplamalardan ayri tutulur." actions={<div className="header-actions">{isAdmin ? <Link className="secondary-button" to={adminReturn}>Yonetici alanina don</Link> : <><button className="secondary-button" onClick={refresh} disabled={pending}>{pending && <LoaderCircle className="spin" size={16} />}Yenile</button><button className="primary-button" onClick={createAiSummary} disabled={pending}>{pending && <LoaderCircle className="spin" size={16} />}<Sparkles size={16} />AI ozeti olustur</button></>}</div>} />
     {error && <ErrorNotice message={error} onDismiss={() => setError("")} />}
     <SurveyResearchContent research={research} />
   </div>;
@@ -135,7 +135,7 @@ export function AnalysesPage() {
 }
 
 export function AnalysisDetailPage() {
-  const { id } = useParams(); const analysisId = Number(id); const { token } = useAuth(); const [analysis, setAnalysis] = useState<AnalysisDetail | null>(null); const [error, setError] = useState(""); const [surveyId, setSurveyId] = useState<number | null>(null); const [research, setResearch] = useState<SurveyResearch | null>(null); const [researchError, setResearchError] = useState(""); const [researchLoading, setResearchLoading] = useState(false);
+  const { id } = useParams(); const analysisId = Number(id); const { token, user } = useAuth(); const location = useLocation(); const adminReturn = (location.state as { adminReturn?: string } | null)?.adminReturn ?? "/admin"; const isAdmin = user?.role === "admin"; const [analysis, setAnalysis] = useState<AnalysisDetail | null>(null); const [error, setError] = useState(""); const [surveyId, setSurveyId] = useState<number | null>(null); const [research, setResearch] = useState<SurveyResearch | null>(null); const [researchError, setResearchError] = useState(""); const [researchLoading, setResearchLoading] = useState(false);
   useEffect(() => { if (!token || !analysisId) return; api.analysis(analysisId, token).then(setAnalysis).catch((err) => setError(loadError(err))); }, [token, analysisId]);
   useEffect(() => {
     if (!token || !analysis) return;
@@ -156,10 +156,10 @@ export function AnalysisDetailPage() {
       .finally(() => { if (active) setResearchLoading(false); });
     return () => { active = false; };
   }, [token, analysis?.dataset_id]);
-  if (error) return <div className="page"><ErrorNotice message={error} /><Link className="secondary-button" to="/analyses">Listeye don</Link></div>;
+  if (error) return <div className="page"><ErrorNotice message={error} /><Link className="secondary-button" to={isAdmin ? adminReturn : "/analyses"}>Listeye don</Link></div>;
   if (!analysis) return <Loading />;
   const showGenericCharts = !analysis.dataset_id || (!researchLoading && surveyId === null);
-  return <div className="page"><PageHeader title={`Analiz #${analysis.id}`} detail={analysis.filename} actions={<div className="header-actions">{surveyId && <Link className="primary-button" to={`/surveys/${surveyId}/research`}><BarChart3 size={16} />Tam arastirmayi ac</Link>}{analysis.dataset_id && <Link className="secondary-button" to={`/datasets/${analysis.dataset_id}`}>Veri setine git</Link>}</div>} />
+  return <div className="page"><PageHeader title={`Analiz #${analysis.id}`} detail={analysis.filename} actions={<div className="header-actions">{isAdmin && <Link className="secondary-button" to={adminReturn}>Yonetici alanina don</Link>}{surveyId && <Link className="primary-button" to={`/surveys/${surveyId}/research`} state={isAdmin ? { adminReturn } : undefined}><BarChart3 size={16} />Tam arastirmayi ac</Link>}{analysis.dataset_id && <Link className="secondary-button" to={`/datasets/${analysis.dataset_id}`} state={isAdmin ? { adminReturn } : undefined}>Veri setine git</Link>}</div>} />
     <section className="metric-grid top-metrics"><Metric label="Satir" value={analysis.row_count} /><Metric label="Kolon" value={analysis.column_count} /><Metric label="Durum" value={analysis.status || "tamamlandi"} /><Metric label="Uyari" value={analysis.quality_issues.length} /></section>
     <section className="summary-block"><h2>Otomatik ozet</h2><p>{analysis.summary || "Bu analiz icin ozet bulunamadi."}</p></section>
     {surveyId && <section><h2>Anket arastirmasi</h2>{researchLoading ? <Loading /> : research ? <SurveyResearchContent research={research} /> : <div className="summary-block"><p>{researchError || "Bu anket icin arastirma sonucu bulunamadi."}</p><Link className="secondary-button" to={`/surveys/${surveyId}/research`}>Arastirma sayfasini ac</Link></div>}</section>}
@@ -196,22 +196,82 @@ export function PasswordChangePage() {
   return <div className="auth-layout"><section className="auth-intro"><div className="auth-mark">DI</div><h1>Yonetici guvenligi</h1><p>Ilk girisinizden once baslangic sifrenizi degistirin.</p></section><main className="auth-panel"><form className="auth-form" onSubmit={submit}><h2>Yeni sifre belirleyin</h2>{error && <ErrorNotice message={error} />}<label>Mevcut sifre<input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required /></label><label>Yeni sifre<input type="password" minLength={8} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required /></label><button className="primary-button full" disabled={pending}>{pending ? "Guncelleniyor" : "Sifreyi guncelle"}</button><button className="secondary-button full" type="button" onClick={signOut}>Cikis yap</button></form></main></div>;
 }
 
+type AdminTab = "datasets" | "analyses" | "reports" | "surveys";
+type AdminResource = DatasetListItem | AnalysisListItem | ReportListItem | SurveyListItem;
+
+const ADMIN_TABS: Array<{ id: AdminTab; label: string }> = [
+  { id: "datasets", label: "Veri setleri" },
+  { id: "analyses", label: "Analizler" },
+  { id: "reports", label: "Raporlar" },
+  { id: "surveys", label: "Anketler" },
+];
+
 export function AdminPage() {
-  const { token } = useAuth(); const [analysts, setAnalysts] = useState<import("./types").AdminAnalyst[]>([]); const [selectedAnalyst, setSelectedAnalyst] = useState<import("./types").AdminAnalyst | null>(null); const [departments, setDepartments] = useState<import("./types").Department[]>([]); const [department, setDepartment] = useState<import("./types").Department | null>(null); const [tab, setTab] = useState<"datasets" | "analyses" | "reports" | "surveys">("datasets"); const [items, setItems] = useState<Array<DatasetListItem | AnalysisListItem | ReportListItem | SurveyListItem>>([]); const [error, setError] = useState("");
-  useEffect(() => { if (token) api.adminAnalysts(token).then((result) => setAnalysts(result.items)).catch((err) => setError(loadError(err))); }, [token]);
-  useEffect(() => { if (!token || !selectedAnalyst) return; api.adminDepartments(selectedAnalyst.id, token).then((result) => { setDepartments(result.items); setDepartment(null); setItems([]); }).catch((err) => setError(loadError(err))); }, [token, selectedAnalyst?.id]);
-  useEffect(() => { if (!token || !selectedAnalyst || !department) return; const loader = tab === "datasets" ? api.adminDatasets(selectedAnalyst.id, department.id, token) : tab === "analyses" ? api.adminAnalyses(selectedAnalyst.id, department.id, token) : tab === "reports" ? api.adminReports(selectedAnalyst.id, department.id, token) : api.adminSurveys(selectedAnalyst.id, department.id, token); loader.then((result) => setItems(result.items)).catch((err) => setError(loadError(err))); }, [token, selectedAnalyst?.id, department?.id, tab]);
-  return <div className="page"><PageHeader title="Yonetici alani" detail="Veri analistlerinin mudurluk bazli calismalarini salt okunur olarak inceleyin." />{error && <ErrorNotice message={error} onDismiss={() => setError("")} />}{!selectedAnalyst ? <section className="analysis-list">{analysts.map((analyst) => <button className="analysis-card admin-card" key={analyst.id} onClick={() => setSelectedAnalyst(analyst)}><div><strong>{analyst.full_name || "Adi tanimlanmamis"}</strong><p>{analyst.email}</p></div></button>)}</section> : <><button className="secondary-button" onClick={() => { setSelectedAnalyst(null); setDepartment(null); }}>Analist listesine don</button><section><h2>{selectedAnalyst.full_name || selectedAnalyst.email}</h2><div className="department-cards">{departments.map((item) => <button className={department?.id === item.id ? "department-card selected" : "department-card"} key={item.id} onClick={() => setDepartment(item)}>{item.name}</button>)}</div></section>{department && <section><div className="tab-row">{(["datasets", "analyses", "reports", "surveys"] as const).map((item) => <button className={tab === item ? "secondary-button active-tab" : "secondary-button"} key={item} onClick={() => setTab(item)}>{item === "datasets" ? "Veri setleri" : item === "analyses" ? "Analizler" : item === "reports" ? "Raporlar" : "Anketler"}</button>)}</div><div className="data-table-wrap"><table className="data-table"><thead><tr><th>Kayit</th><th>Durum</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><strong>{"original_filename" in item ? item.original_filename : "filename" in item ? item.filename : item.title}</strong></td><td>{"status" in item ? item.status : "Kayitli"}</td></tr>)}</tbody></table></div></section>}</>}</div>;
+  const { token } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const analystId = Number(searchParams.get("analyst")) || null;
+  const departmentId = Number(searchParams.get("department")) || null;
+  const requestedTab = searchParams.get("tab");
+  const tab: AdminTab = ADMIN_TABS.some((item) => item.id === requestedTab) ? requestedTab as AdminTab : "datasets";
+  const [analysts, setAnalysts] = useState<AdminAnalyst[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [items, setItems] = useState<AdminResource[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const selectedAnalyst = analysts.find((item) => item.id === analystId) ?? null;
+  const department = departments.find((item) => item.id === departmentId) ?? null;
+
+  useEffect(() => {
+    if (!token) return;
+    setLoading(true);
+    api.adminAnalysts(token).then((result) => setAnalysts(result.items)).catch((err) => setError(loadError(err))).finally(() => setLoading(false));
+  }, [token]);
+
+  useEffect(() => {
+    if (!token || !analystId) { setDepartments([]); setItems([]); return; }
+    setLoading(true);
+    api.adminDepartments(analystId, token).then((result) => setDepartments(result.items)).catch((err) => setError(loadError(err))).finally(() => setLoading(false));
+  }, [token, analystId]);
+
+  useEffect(() => {
+    if (!token || !analystId || !departmentId) { setItems([]); return; }
+    setLoading(true);
+    const loader = tab === "datasets" ? api.adminDatasets(analystId, departmentId, token)
+      : tab === "analyses" ? api.adminAnalyses(analystId, departmentId, token)
+        : tab === "reports" ? api.adminReports(analystId, departmentId, token)
+          : api.adminSurveys(analystId, departmentId, token);
+    loader.then((result) => setItems(result.items)).catch((err) => setError(loadError(err))).finally(() => setLoading(false));
+  }, [token, analystId, departmentId, tab]);
+
+  const chooseAnalyst = (analyst: AdminAnalyst) => setSearchParams({ analyst: String(analyst.id) });
+  const chooseDepartment = (item: Department) => setSearchParams({ analyst: String(analystId), department: String(item.id), tab });
+  const chooseTab = (nextTab: AdminTab) => setSearchParams({ analyst: String(analystId), department: String(departmentId), tab: nextTab });
+  const adminReturn = `/admin?${searchParams.toString()}`;
+  const resourcePath = (item: AdminResource) => tab === "datasets" ? `/datasets/${item.id}` : tab === "analyses" ? `/analyses/${item.id}` : tab === "reports" ? `/reports/${item.id}` : `/surveys/${item.id}/research`;
+  const resourceName = (item: AdminResource) => "original_filename" in item ? item.original_filename : "filename" in item ? item.filename : item.title;
+
+  return <div className="page">
+    <PageHeader title="Yonetici alani" detail="Veri analistlerinin mudurluk bazli calismalarini salt okunur olarak inceleyin." />
+    {error && <ErrorNotice message={error} onDismiss={() => setError("")} />}
+    {!analystId ? loading ? <Loading /> : <section className="analysis-list">{analysts.map((analyst) => <button className="analysis-card admin-card" key={analyst.id} onClick={() => chooseAnalyst(analyst)}><div><strong>{analyst.full_name || "Adi tanimlanmamis"}</strong><p>{analyst.email}</p></div></button>)}</section>
+      : !selectedAnalyst ? <Loading /> : <>
+        <button className="secondary-button" onClick={() => setSearchParams({})}>Analist listesine don</button>
+        <section><h2>{selectedAnalyst.full_name || selectedAnalyst.email}</h2><div className="department-cards">{departments.map((item) => <button className={department?.id === item.id ? "department-card selected" : "department-card"} key={item.id} onClick={() => chooseDepartment(item)}>{item.name}</button>)}</div></section>
+        {department && <section><div className="tab-row">{ADMIN_TABS.map((item) => <button className={tab === item.id ? "secondary-button active-tab" : "secondary-button"} key={item.id} onClick={() => chooseTab(item.id)}>{item.label}</button>)}</div>
+          {loading ? <Loading /> : items.length === 0 ? <p className="muted">Bu mudurlukte kayit bulunamadi.</p> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Kayit</th><th>Durum</th><th></th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><strong>{resourceName(item)}</strong></td><td>{"status" in item ? item.status : tab === "surveys" ? "Anket" : "Kayitli"}</td><td><Link className="table-link" to={resourcePath(item)} state={{ adminReturn }}>Goruntule</Link></td></tr>)}</tbody></table></div>}
+        </section>}
+      </>}
+  </div>;
 }
 
 export function ReportDetailPage() {
-  const { id } = useParams(); const reportId = Number(id); const { token } = useAuth(); const [report, setReport] = useState<ReportDetail | null>(null); const [error, setError] = useState("");
+  const { id } = useParams(); const reportId = Number(id); const { token, user } = useAuth(); const location = useLocation(); const adminReturn = (location.state as { adminReturn?: string } | null)?.adminReturn ?? "/admin"; const isAdmin = user?.role === "admin"; const [report, setReport] = useState<ReportDetail | null>(null); const [error, setError] = useState("");
   useEffect(() => { if (!token || !reportId) return; api.report(reportId, token).then(setReport).catch((err) => setError(loadError(err))); }, [token, reportId]);
-  if (error) return <div className="page"><ErrorNotice message={error} /><Link className="secondary-button" to="/reports">Listeye don</Link></div>;
+  if (error) return <div className="page"><ErrorNotice message={error} /><Link className="secondary-button" to={isAdmin ? adminReturn : "/reports"}>Listeye don</Link></div>;
   if (!report) return <Loading />;
-  return <div className="page"><PageHeader title={report.title} detail={`${report.analysis_ids.length} analizden olusturuldu | ${formatDate(report.created_at)}`} actions={<StatusPill value={report.status} />} />
+  return <div className="page"><PageHeader title={report.title} detail={`${report.analysis_ids.length} analizden olusturuldu | ${formatDate(report.created_at)}`} actions={<div className="header-actions"><StatusPill value={report.status} />{isAdmin && <Link className="secondary-button" to={adminReturn}>Yonetici alanina don</Link>}</div>} />
     {report.status === "failed" ? <ErrorNotice message={report.error_message || "Rapor olusturulamadi."} /> : <article className="report-content">{(report.content || "Rapor icerigi bulunamadi.").split("\n").map((line, index) => line.trim() ? <p key={index}>{line}</p> : <br key={index} />)}</article>}
-    <section className="report-meta"><span>Analizler: {report.analysis_ids.map((analysisId) => <Link key={analysisId} to={`/analyses/${analysisId}`}>#{analysisId} </Link>)}</span>{report.model_name && <span>Model: {report.model_name}</span>}</section>
+    <section className="report-meta"><span>Analizler: {report.analysis_ids.map((analysisId) => <Link key={analysisId} to={`/analyses/${analysisId}`} state={isAdmin ? { adminReturn } : undefined}>#{analysisId} </Link>)}</span>{report.model_name && <span>Model: {report.model_name}</span>}</section>
   </div>;
 }
 

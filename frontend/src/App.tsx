@@ -12,15 +12,15 @@ export default function App() {
     <Route path="/register" element={<AuthPage mode="register" />} />
     <Route path="/change-password" element={<PasswordChangePage />} />
     <Route element={<RequireAuth />}>
+      <Route path="/datasets/:id" element={<DatasetDetailPage />} />
+      <Route path="/surveys/:id/research" element={<SurveyResearchPage />} />
+      <Route path="/analyses/:id" element={<AnalysisDetailPage />} />
+      <Route path="/reports/:id" element={<ReportDetailPage />} />
       <Route element={<RequireAnalyst />}>
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/datasets" element={<DatasetsPage />} />
-        <Route path="/datasets/:id" element={<DatasetDetailPage />} />
-        <Route path="/surveys/:id/research" element={<SurveyResearchPage />} />
         <Route path="/analyses" element={<AnalysesPage />} />
-        <Route path="/analyses/:id" element={<AnalysisDetailPage />} />
         <Route path="/reports" element={<ReportsPage />} />
-        <Route path="/reports/:id" element={<ReportDetailPage />} />
       </Route>
       <Route element={<RequireAdmin />}><Route path="/admin" element={<AdminPage />} /></Route>
     </Route>
