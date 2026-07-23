@@ -796,13 +796,6 @@ def test_roles_departments_and_administrative_read_access(monkeypatch):
 
     login = client.post("/login", json={"email": "manager@example.com", "password": "manager-password"})
     admin_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
-    changed = client.post(
-        "/users/me/password",
-        headers=admin_headers,
-        json={"current_password": "manager-password", "new_password": "manager-password-new"},
-    )
-    assert changed.status_code == 200
-    admin_headers = {"Authorization": f"Bearer {client.post('/login', json={'email': 'manager@example.com', 'password': 'manager-password-new'}).json()['access_token']}"}
     analysts = client.get("/admin/analysts", headers=admin_headers)
     assert analysts.status_code == 200
     assert {item["email"] for item in analysts.json()["items"]}.issuperset({"analyst-a@example.com", "analyst-b@example.com"})

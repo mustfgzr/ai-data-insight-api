@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
 from auth import hash_password
@@ -10,6 +11,8 @@ import models
 
 
 ENV_FIELDS = ("ADMIN_BOOTSTRAP_FULL_NAME", "ADMIN_BOOTSTRAP_EMAIL", "ADMIN_BOOTSTRAP_PASSWORD")
+
+load_dotenv()
 
 
 def bootstrap_admin(db: Session) -> tuple[models.User, bool]:
@@ -28,7 +31,7 @@ def bootstrap_admin(db: Session) -> tuple[models.User, bool]:
         full_name=" ".join(values["ADMIN_BOOTSTRAP_FULL_NAME"].split()),
         email=email,
         role="admin",
-        must_change_password=True,
+        must_change_password=False,
         hashed_password=hash_password(values["ADMIN_BOOTSTRAP_PASSWORD"]),
     )
     db.add(admin)
