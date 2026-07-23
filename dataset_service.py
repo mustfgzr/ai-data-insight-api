@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 import models
 from analysis_utils import build_chart_data, build_data_quality_issues, build_data_summary
 from data_ingestor import IngestedData, dataframe_records, ingest_content
+from department_service import get_department_or_404
 from schemas import DatasetUploadResponse, SurveyColumnMetadata
 from stats_engine import analyze as stats_analyze, result_to_dict
 from survey_ingestor import parse_survey_upload
@@ -19,9 +20,11 @@ from survey_storage import save_parsed_survey
 async def upload_dataset(
     db: Session,
     user_id: int,
+    department_id: int,
     file: UploadFile,
 ) -> DatasetUploadResponse:
     """Bir dosyayı survey veya genel dataset olarak kalıcılaştırır."""
+    get_department_or_404(db, department_id)
     content = await file.read()
 
     try:
@@ -38,6 +41,7 @@ async def upload_dataset(
             parsed_survey,
             source_content=content,
             content_type=file.content_type,
+            department_id=department_id,
         )
         analysis = (
             db.query(models.DataAnalysis)
@@ -54,6 +58,7 @@ async def upload_dataset(
         return DatasetUploadResponse(
             dataset_id=survey.dataset_id,
             analysis_id=analysis.id,
+            department_id=department_id,
             survey_id=survey.survey_id,
             filename=survey.filename,
             detected_format="survey",
@@ -71,6 +76,7 @@ async def upload_dataset(
     return _save_general_dataset(
         db=db,
         user_id=user_id,
+        department_id=department_id,
         ingested=ingested,
         content=content,
         content_type=file.content_type,
@@ -80,12 +86,14 @@ async def upload_dataset(
 def _save_general_dataset(
     db: Session,
     user_id: int,
+    department_id: int,
     ingested: IngestedData,
     content: bytes,
     content_type: str | None,
 ) -> DatasetUploadResponse:
     dataset = models.Dataset(
         user_id=user_id,
+        department_id=department_id,
         filename=ingested.filename,
         original_filename=ingested.filename,
         file_type=_file_type(ingested.filename),
@@ -179,6 +187,7 @@ def _save_general_dataset(
     return DatasetUploadResponse(
         dataset_id=dataset.id,
         analysis_id=analysis.id,
+        department_id=dataset.department_id,
         filename=dataset.filename,
         detected_format="general",
         row_count=dataset.row_count,

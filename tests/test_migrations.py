@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, inspect
 
 EXPECTED_TABLES = {
     "users",
+    "departments",
     "analyses",
     "data_analyses",
     "datasets",

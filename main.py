@@ -10,13 +10,15 @@ from sqlalchemy.orm import Session
 from database import engine
 import models
 from schemas import (
-    UserCreate, UserLogin, UserResponse, Token, AnalysisResponse,
-    DataAnalysisResponse, DataAnalysisListItem,
+    UserCreate, UserLogin, UserResponse, Token, PasswordChange, AnalysisResponse,
+    DataAnalysisResponse, DataAnalysisListItem, AnalysisListResponse,
     CompareResponse, AskResponse,
     DatasetAnalysisCreate, DatasetComparisonCreate, DatasetDetailResponse,
     DatasetListResponse, DatasetQuestionCreate, DatasetRowsResponse, DatasetUploadResponse,
-    ReportCreate, ReportDetailResponse, ReportListItem,
+    ReportCreate, ReportDetailResponse, ReportListItem, ReportListResponse,
     SurveyDetectionResponse, SurveyResearchResponse, SurveyUploadResponse, SurveyListItem, SurveyDetailResponse,
+    DepartmentCreate, DepartmentCreateResponse, DepartmentListResponse,
+    AdminAnalystDetail, AdminAnalystListResponse, SurveyListResponse,
 )
 from auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -24,8 +26,13 @@ from auth import (
     get_current_user,
     get_db,
     hash_password,
+    require_analyst,
+    require_admin,
+    read_owner_id,
     verify_password,
 )
+from department_service import create_department as create_shared_department, list_departments as list_shared_departments
+from admin_service import get_analyst_detail, list_analyst_departments, list_analysts as list_admin_analysts, list_surveys as list_scoped_surveys
 from file_parser import extract_text
 from ai_service import summarize_text
 from data_ingestor import ingest_file
@@ -98,7 +105,10 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
             detail="Bu e-posta adresi zaten kayıtlı",
         )
     db_user = models.User(
+        full_name=user.full_name,
         email=user.email,
+        role="analyst",
+        must_change_password=False,
         hashed_password=hash_password(user.password),
     )
     db.add(db_user)
@@ -135,10 +145,133 @@ def get_me(current_user: models.User = Depends(get_current_user)):
     return current_user
 
 
+@app.post("/users/me/password", response_model=UserResponse)
+def change_password(
+    request: PasswordChange,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not verify_password(request.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mevcut sifre hatali")
+    current_user.hashed_password = hash_password(request.new_password)
+    current_user.must_change_password = False
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+
+@app.get("/departments", response_model=DepartmentListResponse)
+def list_departments(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    q: str | None = Query(default=None, max_length=160),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return list_shared_departments(db, offset, limit, q)
+
+
+@app.post("/departments", response_model=DepartmentCreateResponse, status_code=status.HTTP_201_CREATED)
+def create_department(
+    request: DepartmentCreate,
+    current_user: models.User = Depends(require_analyst),
+    db: Session = Depends(get_db),
+):
+    response = create_shared_department(db, request.name)
+    return Response(
+        content=response.model_dump_json(),
+        media_type="application/json",
+        status_code=status.HTTP_201_CREATED if response.created else status.HTTP_200_OK,
+    )
+
+
+@app.get("/admin/analysts", response_model=AdminAnalystListResponse)
+def list_administrative_analysts(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    q: str | None = Query(default=None, max_length=160),
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    return list_admin_analysts(db, offset, limit, q)
+
+
+@app.get("/admin/analysts/{analyst_id}", response_model=AdminAnalystDetail)
+def get_administrative_analyst(
+    analyst_id: int,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    return get_analyst_detail(db, analyst_id)
+
+
+@app.get("/admin/analysts/{analyst_id}/departments", response_model=DepartmentListResponse)
+def list_administrative_analyst_departments(
+    analyst_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    return list_analyst_departments(db, analyst_id, offset, limit)
+
+
+@app.get("/admin/analysts/{analyst_id}/datasets", response_model=DatasetListResponse)
+def list_administrative_datasets(
+    analyst_id: int,
+    department_id: int | None = Query(default=None, gt=0),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    get_analyst_detail(db, analyst_id)
+    return list_dataset_history(db, analyst_id, offset, limit, department_id)
+
+
+@app.get("/admin/analysts/{analyst_id}/analyses", response_model=AnalysisListResponse)
+def list_administrative_analyses(
+    analyst_id: int,
+    department_id: int | None = Query(default=None, gt=0),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    get_analyst_detail(db, analyst_id)
+    return list_analysis_history(db, analyst_id, offset, limit, department_id)
+
+
+@app.get("/admin/analysts/{analyst_id}/reports", response_model=ReportListResponse)
+def list_administrative_reports(
+    analyst_id: int,
+    department_id: int | None = Query(default=None, gt=0),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    get_analyst_detail(db, analyst_id)
+    return list_saved_reports(db, analyst_id, offset, limit, department_id)
+
+
+@app.get("/admin/analysts/{analyst_id}/surveys", response_model=SurveyListResponse)
+def list_administrative_surveys(
+    analyst_id: int,
+    department_id: int | None = Query(default=None, gt=0),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    get_analyst_detail(db, analyst_id)
+    return list_scoped_surveys(db, analyst_id, offset, limit, department_id)
+
+
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze(
     file: UploadFile = File(...),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_analyst),
     db: Session = Depends(get_db),
 ):
     # 1. Dosyadan metin çıkar
@@ -167,7 +300,7 @@ async def analyze_data(
     file: UploadFile = File(...),
     template: str = Form("general"),
     question: str = Form(None),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_analyst),
     db: Session = Depends(get_db),
 ):
     """Veri dosyasını analiz eder: istatistik çıkar + Gemini stratejik rapor."""
@@ -240,7 +373,7 @@ async def analyze_compare(
     file1: UploadFile = File(...),
     file2: UploadFile = File(...),
     question: str = Form(None),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_analyst),
 ):
     """İki veri setini karşılaştırır ve Gemini ile stratejik analiz üretir."""
     ingested1 = await ingest_file(file1)
@@ -266,7 +399,7 @@ async def analyze_compare(
 async def analyze_ask(
     file: UploadFile = File(...),
     question: str = Form(...),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_analyst),
 ):
     """Veri seti hakkında doğal dilde soru sorar, Gemini yanıtlar."""
     ingested = await ingest_file(file)
@@ -285,13 +418,16 @@ async def analyze_ask(
     )
 
 
-@app.get("/analyses", response_model=list[DataAnalysisListItem])
+@app.get("/analyses", response_model=AnalysisListResponse)
 def list_analyses(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    department_id: int | None = Query(default=None, gt=0),
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Kullanıcının geçmiş veri analizlerini listeler."""
-    return list_analysis_history(db, current_user.id)
+    return list_analysis_history(db, current_user.id, offset, limit, department_id)
 
 
 @app.get("/analyses/{analysis_id}", response_model=DataAnalysisResponse)
@@ -301,7 +437,7 @@ def get_analysis(
     db: Session = Depends(get_db),
 ):
     """Belirli bir veri analizinin detayını getirir."""
-    detail = get_analysis_detail(db, current_user.id, analysis_id)
+    detail = get_analysis_detail(db, read_owner_id(current_user), analysis_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Analiz bulunamadı")
     return detail
@@ -315,7 +451,8 @@ def get_analysis(
 )
 async def upload_survey(
     file: UploadFile = File(...),
-    current_user: models.User = Depends(get_current_user),
+    department_id: int = Form(..., gt=0),
+    current_user: models.User = Depends(require_analyst),
     db: Session = Depends(get_db),
 ):
     """Anket CSV/Excel dosyasını okur, metadata/soru/cevap/rapor kayıtlarını oluşturur."""
@@ -328,6 +465,7 @@ async def upload_survey(
             parsed,
             source_content=content,
             content_type=file.content_type,
+            department_id=department_id,
         )
     except HTTPException:
         db.rollback()
@@ -340,12 +478,13 @@ async def upload_survey(
 @app.post("/datasets/upload", response_model=DatasetUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_dataset(
     file: UploadFile = File(...),
-    current_user: models.User = Depends(get_current_user),
+    department_id: int = Form(..., gt=0),
+    current_user: models.User = Depends(require_analyst),
     db: Session = Depends(get_db),
 ):
     """CSV/XLSX dosyasını survey veya genel dataset olarak işler ve kaydeder."""
     try:
-        return await process_dataset_upload(db, current_user.id, file)
+        return await process_dataset_upload(db, current_user.id, department_id, file)
     except HTTPException:
         db.rollback()
         raise
@@ -362,7 +501,7 @@ async def upload_dataset(
 def analyze_existing_dataset(
     dataset_id: int,
     request: DatasetAnalysisCreate,
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_analyst),
     db: Session = Depends(get_db),
 ):
     """Kalici dataset satirlarindan yeni ve bagimsiz bir analiz olusturur."""
@@ -385,7 +524,7 @@ def analyze_existing_dataset(
 @app.post("/datasets/{dataset_id}/detect-survey", response_model=SurveyDetectionResponse)
 def detect_dataset_survey(
     dataset_id: int,
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_analyst),
     db: Session = Depends(get_db),
 ):
     """Kalici kaynak dosyadan survey yapisini algilar ve varsa dataset'e baglar."""
@@ -403,7 +542,7 @@ def detect_dataset_survey(
 def ask_about_existing_dataset(
     dataset_id: int,
     request: DatasetQuestionCreate,
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_analyst),
     db: Session = Depends(get_db),
 ):
     return ask_about_owned_dataset(db, current_user.id, dataset_id, request.question)
@@ -412,7 +551,7 @@ def ask_about_existing_dataset(
 @app.post("/dataset-comparisons", response_model=CompareResponse)
 def compare_existing_datasets(
     request: DatasetComparisonCreate,
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_analyst),
     db: Session = Depends(get_db),
 ):
     return compare_owned_datasets(db, current_user.id, request.dataset_ids, request.question)
@@ -422,10 +561,11 @@ def compare_existing_datasets(
 def list_datasets(
     offset: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    department_id: int | None = Query(default=None, gt=0),
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return list_dataset_history(db, current_user.id, offset, limit)
+    return list_dataset_history(db, current_user.id, offset, limit, department_id)
 
 
 @app.get("/datasets/{dataset_id}", response_model=DatasetDetailResponse)
@@ -434,7 +574,7 @@ def get_dataset(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    detail = get_dataset_detail(db, current_user.id, dataset_id)
+    detail = get_dataset_detail(db, read_owner_id(current_user), dataset_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Dataset bulunamadı")
     return detail
@@ -448,7 +588,7 @@ def get_dataset_row_page(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    page = get_dataset_rows(db, current_user.id, dataset_id, offset, limit)
+    page = get_dataset_rows(db, read_owner_id(current_user), dataset_id, offset, limit)
     if page is None:
         raise HTTPException(status_code=404, detail="Dataset bulunamadı")
     return page
@@ -460,8 +600,8 @@ def download_dataset_source(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    detail = get_dataset_detail(db, current_user.id, dataset_id)
-    source_file = get_dataset_file(db, current_user.id, dataset_id)
+    detail = get_dataset_detail(db, read_owner_id(current_user), dataset_id)
+    source_file = get_dataset_file(db, read_owner_id(current_user), dataset_id)
     if detail is None or source_file is None:
         raise HTTPException(status_code=404, detail="Kaynak dosya bulunamadı")
 
@@ -476,7 +616,7 @@ def download_dataset_source(
 @app.post("/reports", response_model=ReportDetailResponse, status_code=status.HTTP_201_CREATED)
 def create_report(
     request: ReportCreate,
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_analyst),
     db: Session = Depends(get_db),
 ):
     try:
@@ -488,12 +628,15 @@ def create_report(
         raise HTTPException(status_code=500, detail="Rapor kaydedilirken hata oluştu") from exc
 
 
-@app.get("/reports", response_model=list[ReportListItem])
+@app.get("/reports", response_model=ReportListResponse)
 def list_reports(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    department_id: int | None = Query(default=None, gt=0),
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return list_saved_reports(db, current_user.id)
+    return list_saved_reports(db, current_user.id, offset, limit, department_id)
 
 
 @app.get("/reports/{report_id}", response_model=ReportDetailResponse)
@@ -502,24 +645,22 @@ def get_report(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    report = get_report_detail(db, current_user.id, report_id)
+    report = get_report_detail(db, read_owner_id(current_user), report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Rapor bulunamadı")
     return report
 
 
-@app.get("/surveys", response_model=list[SurveyListItem])
+@app.get("/surveys", response_model=SurveyListResponse)
 def list_surveys(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    department_id: int | None = Query(default=None, gt=0),
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Kullanıcının yüklediği anketleri listeler."""
-    return (
-        db.query(models.Survey)
-        .filter(models.Survey.user_id == current_user.id)
-        .order_by(models.Survey.created_at.desc())
-        .all()
-    )
+    return list_scoped_surveys(db, current_user.id, offset, limit, department_id)
 
 
 @app.get("/surveys/{survey_id}", response_model=SurveyDetailResponse)
@@ -529,7 +670,7 @@ def get_survey(
     db: Session = Depends(get_db),
 ):
     """Anketin dataset, kolon, soru ve rapor özetini getirir."""
-    detail = get_survey_detail(db, current_user.id, survey_id)
+    detail = get_survey_detail(db, read_owner_id(current_user), survey_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Anket bulunamadı")
     return detail
@@ -542,13 +683,13 @@ def get_research_analysis(
     db: Session = Depends(get_db),
 ):
     """Anketin kaydedilmiş, Gemini'den bağımsız sayısal araştırma analizini getirir."""
-    return get_survey_research(db, current_user.id, survey_id)
+    return get_survey_research(db, read_owner_id(current_user), survey_id)
 
 
 @app.post("/surveys/{survey_id}/research/refresh", response_model=SurveyResearchResponse)
 def refresh_research_analysis(
     survey_id: int,
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_analyst),
     db: Session = Depends(get_db),
 ):
     """Mevcut anket cevaplarından araştırma analizini dosya yüklemeden yeniden hesaplar."""
@@ -565,7 +706,7 @@ def refresh_research_analysis(
 @app.post("/surveys/{survey_id}/research/ai-summary", response_model=SurveyResearchResponse)
 def create_research_ai_summary(
     survey_id: int,
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_analyst),
     db: Session = Depends(get_db),
 ):
     """Kaydedilmiş sayısal araştırma sonucundan isteğe bağlı Gemini özeti üretir."""

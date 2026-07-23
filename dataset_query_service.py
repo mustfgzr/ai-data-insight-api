@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 import models
 from schemas import (
+    AnalysisListResponse,
     DataAnalysisListItem,
     DataAnalysisResponse,
     DatasetDetailResponse,
@@ -22,8 +23,11 @@ def list_datasets(
     user_id: int,
     offset: int,
     limit: int,
+    department_id: int | None = None,
 ) -> DatasetListResponse:
     query = db.query(models.Dataset).filter(models.Dataset.user_id == user_id)
+    if department_id is not None:
+        query = query.filter(models.Dataset.department_id == department_id)
     total = query.count()
     datasets = (
         query.order_by(models.Dataset.created_at.desc(), models.Dataset.id.desc())
@@ -39,7 +43,7 @@ def list_datasets(
     )
 
 
-def get_dataset_detail(db: Session, user_id: int, dataset_id: int) -> DatasetDetailResponse | None:
+def get_dataset_detail(db: Session, user_id: int | None, dataset_id: int) -> DatasetDetailResponse | None:
     dataset = _owned_dataset(db, user_id, dataset_id)
     if dataset is None:
         return None
@@ -58,15 +62,10 @@ def get_dataset_detail(db: Session, user_id: int, dataset_id: int) -> DatasetDet
         .all()
     )
     survey = db.query(models.Survey).filter(models.Survey.dataset_id == dataset.id).first()
-    analysis = (
-        db.query(models.DataAnalysis)
-        .filter(
-            models.DataAnalysis.dataset_id == dataset.id,
-            models.DataAnalysis.user_id == user_id,
-        )
-        .order_by(models.DataAnalysis.id.desc())
-        .first()
-    )
+    analysis_query = db.query(models.DataAnalysis).filter(models.DataAnalysis.dataset_id == dataset.id)
+    if user_id is not None:
+        analysis_query = analysis_query.filter(models.DataAnalysis.user_id == user_id)
+    analysis = analysis_query.order_by(models.DataAnalysis.id.desc()).first()
     source_file = db.query(models.DatasetFile.id).filter(models.DatasetFile.dataset_id == dataset.id).first()
 
     return DatasetDetailResponse(
@@ -81,7 +80,7 @@ def get_dataset_detail(db: Session, user_id: int, dataset_id: int) -> DatasetDet
 
 def get_dataset_rows(
     db: Session,
-    user_id: int,
+    user_id: int | None,
     dataset_id: int,
     offset: int,
     limit: int,
@@ -102,43 +101,48 @@ def get_dataset_rows(
     )
 
 
-def get_dataset_file(db: Session, user_id: int, dataset_id: int) -> models.DatasetFile | None:
+def get_dataset_file(db: Session, user_id: int | None, dataset_id: int) -> models.DatasetFile | None:
     dataset = _owned_dataset(db, user_id, dataset_id)
     if dataset is None:
         return None
     return db.query(models.DatasetFile).filter(models.DatasetFile.dataset_id == dataset.id).first()
 
 
-def list_analyses(db: Session, user_id: int) -> list[DataAnalysisListItem]:
+def list_analyses(
+    db: Session,
+    user_id: int,
+    offset: int,
+    limit: int,
+    department_id: int | None = None,
+) -> AnalysisListResponse:
     records = (
         db.query(models.DataAnalysis)
         .filter(models.DataAnalysis.user_id == user_id)
-        .order_by(models.DataAnalysis.created_at.desc(), models.DataAnalysis.id.desc())
-        .all()
     )
-    return [_analysis_list_item(record) for record in records]
-
-
-def get_analysis_detail(db: Session, user_id: int, analysis_id: int) -> DataAnalysisResponse | None:
-    record = (
-        db.query(models.DataAnalysis)
-        .filter(
-            models.DataAnalysis.id == analysis_id,
-            models.DataAnalysis.user_id == user_id,
+    if department_id is not None:
+        records = records.join(models.Dataset, models.DataAnalysis.dataset_id == models.Dataset.id).filter(
+            models.Dataset.department_id == department_id
         )
-        .first()
-    )
+    total = records.count()
+    records = records.order_by(models.DataAnalysis.created_at.desc(), models.DataAnalysis.id.desc()).offset(offset).limit(limit).all()
+    return AnalysisListResponse(offset=offset, limit=limit, total=total, items=[_analysis_list_item(record) for record in records])
+
+
+def get_analysis_detail(db: Session, user_id: int | None, analysis_id: int) -> DataAnalysisResponse | None:
+    query = db.query(models.DataAnalysis).filter(models.DataAnalysis.id == analysis_id)
+    if user_id is not None:
+        query = query.filter(models.DataAnalysis.user_id == user_id)
+    record = query.first()
     if record is None:
         return None
     return _analysis_response(record)
 
 
-def _owned_dataset(db: Session, user_id: int, dataset_id: int) -> models.Dataset | None:
-    return (
-        db.query(models.Dataset)
-        .filter(models.Dataset.id == dataset_id, models.Dataset.user_id == user_id)
-        .first()
-    )
+def _owned_dataset(db: Session, user_id: int | None, dataset_id: int) -> models.Dataset | None:
+    query = db.query(models.Dataset).filter(models.Dataset.id == dataset_id)
+    if user_id is not None:
+        query = query.filter(models.Dataset.user_id == user_id)
+    return query.first()
 
 
 def _dataset_list_item(dataset: models.Dataset) -> DatasetListItem:
@@ -150,6 +154,8 @@ def _dataset_list_item(dataset: models.Dataset) -> DatasetListItem:
         detected_format=dataset.detected_format,
         row_count=dataset.row_count,
         column_count=dataset.column_count,
+        department_id=dataset.department_id,
+        department_name=None,
         created_at=dataset.created_at,
     )
 

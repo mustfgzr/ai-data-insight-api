@@ -1,7 +1,7 @@
 :root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #17221f; background: #f4f7f6; font-synthesis: none; }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
 a { color: inherit; text-decoration: none; }
@@ -12,6 +12,8 @@ a { color: inherit; text-decoration: none; }
 .nav-link { display: flex; align-items: center; gap: 11px; min-height: 42px; padding: 0 12px; color: #bfdbd5; border-radius: 6px; font-size: 14px; }
 .nav-link:hover, .nav-link.active { color: #fff; background: #1d5752; }
 .sidebar-footer { display: flex; align-items: center; gap: 8px; margin-top: auto; padding: 12px 6px 0; border-top: 1px solid #28615c; }
+.department-switcher { display: grid; gap: 5px; margin: 18px 8px; color: #b9d8d1; font-size: 11px; font-weight: 700; }
+.department-switcher select, .department-control select, .department-control input { min-height: 36px; border: 1px solid #cbd9d5; border-radius: 6px; background: #fff; padding: 0 10px; color: #264541; }
 .account-email { flex: 1; overflow: hidden; color: #bfdbd5; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .content-area { min-width: 0; }
 .page { width: min(1180px, 100%); margin: 0 auto; padding: 34px 38px 48px; }
@@ -55,6 +57,9 @@ a { color: inherit; text-decoration: none; }
 .muted { color: #879692; }
 .upload-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 20px; }
 .upload-main { display: grid; gap: 14px; }
+.department-control { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; border-left: 3px solid #2c8c7d; padding-left: 14px; }
+.department-control label, .department-control > div { display: grid; gap: 6px; color: #435b55; font-size: 12px; font-weight: 700; }
+.department-control > div { grid-template-columns: minmax(180px, 1fr) auto; align-items: end; }
 .dropzone { display: grid; min-height: 292px; place-items: center; align-content: center; gap: 9px; border: 1.5px dashed #91b7af; border-radius: 6px; background: #fbfefd; color: #27766e; text-align: center; transition: background .15s, border-color .15s; }
 .dropzone:hover, .dropzone.dragging { border-color: #15766f; background: #f0f8f6; }
 .dropzone h2 { max-width: 85%; margin: 4px 0 0; overflow-wrap: anywhere; color: #294b46; font-size: 17px; }
@@ -104,6 +109,13 @@ a { color: inherit; text-decoration: none; }
 .report-inputs input, .auth-form input { width: 100%; height: 38px; border: 1px solid #cfdcd8; border-radius: 6px; background: #fff; padding: 0 11px; color: #213e38; outline: none; font-size: 13px; }
 .report-inputs input:focus, .auth-form input:focus { border-color: #1b8779; box-shadow: 0 0 0 3px #dcefeb; }
 .analysis-list, .report-list { display: grid; gap: 10px; }
+.department-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+.department-card { min-height: 72px; border: 1px solid #dce5e2; border-radius: 6px; background: #fff; color: #26463f; padding: 14px; text-align: left; font-weight: 700; }
+.department-card:hover, .department-card.selected { border-color: #67a99b; background: #f7fcfa; }
+.admin-card { width: 100%; border: 1px solid #dce5e2; border-radius: 6px; background: #fff; padding: 15px; text-align: left; color: #26463f; }
+.admin-card p { margin: 5px 0 0; color: #687b76; }
+.tab-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.active-tab { border-color: #15766f; color: #0d625c; }
 .analysis-card { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: start; gap: 14px; border: 1px solid #dce5e2; border-radius: 6px; background: #fff; padding: 15px; cursor: pointer; }
 .analysis-card:hover, .analysis-card.selected { border-color: #67a99b; background: #f7fcfa; }
 .analysis-card input { width: 16px; height: 16px; margin: 3px 0 0; accent-color: #15766f; }

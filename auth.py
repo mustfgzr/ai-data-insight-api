@@ -20,6 +20,8 @@ if not SECRET_KEY:
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+ROLE_ANALYST = "analyst"
+ROLE_ADMIN = "admin"
 
 # ── Şifre Hash'leme ──────────────────────────────────────────
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -80,3 +82,21 @@ def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+def require_analyst(current_user: models.User = Depends(get_current_user)) -> models.User:
+    if current_user.role != ROLE_ANALYST:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu islem yalnizca veri analistleri icindir")
+    return current_user
+
+
+def require_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
+    if current_user.role != ROLE_ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu islem yalnizca yoneticiler icindir")
+    if current_user.must_change_password:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Devam etmek icin ilk sifrenizi degistirin")
+    return current_user
+
+
+def read_owner_id(current_user: models.User) -> int | None:
+    return None if current_user.role == ROLE_ADMIN else current_user.id

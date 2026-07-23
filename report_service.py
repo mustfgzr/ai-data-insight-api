@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 
 import models
 from ai_analyst import MODEL, generate_report_from_analyses
-from schemas import ReportCreate, ReportDetailResponse, ReportListItem
+from department_service import get_department_or_404
+from schemas import ReportCreate, ReportDetailResponse, ReportListItem, ReportListResponse
 
 
 def create_report(db: Session, user_id: int, request: ReportCreate) -> ReportDetailResponse:
-    analyses = _get_owned_analyses(db, user_id, request.analysis_ids)
+    get_department_or_404(db, request.department_id)
+    analyses = _get_owned_analyses(db, user_id, request.analysis_ids, request.department_id)
     title = request.title.strip() if request.title and request.title.strip() else f"{len(analyses)} analiz için rapor"
     report = models.Report(
         user_id=user_id,
@@ -48,22 +50,37 @@ def create_report(db: Session, user_id: int, request: ReportCreate) -> ReportDet
     return _report_detail(db, report)
 
 
-def list_reports(db: Session, user_id: int) -> list[ReportListItem]:
-    reports = (
-        db.query(models.Report)
-        .filter(models.Report.user_id == user_id)
-        .order_by(models.Report.created_at.desc(), models.Report.id.desc())
-        .all()
+def list_reports(
+    db: Session,
+    user_id: int,
+    offset: int,
+    limit: int,
+    department_id: int | None = None,
+) -> ReportListResponse:
+    query = db.query(models.Report).filter(models.Report.user_id == user_id)
+    if department_id is not None:
+        query = (
+            query.join(models.ReportAnalysis, models.ReportAnalysis.report_id == models.Report.id)
+            .join(models.DataAnalysis, models.DataAnalysis.id == models.ReportAnalysis.analysis_id)
+            .join(models.Dataset, models.Dataset.id == models.DataAnalysis.dataset_id)
+            .filter(models.Dataset.department_id == department_id)
+            .distinct()
+        )
+    total = query.count()
+    reports = query.order_by(models.Report.created_at.desc(), models.Report.id.desc()).offset(offset).limit(limit).all()
+    return ReportListResponse(
+        offset=offset,
+        limit=limit,
+        total=total,
+        items=[_report_list_item(db, report) for report in reports],
     )
-    return [_report_list_item(db, report) for report in reports]
 
 
-def get_report_detail(db: Session, user_id: int, report_id: int) -> ReportDetailResponse | None:
-    report = (
-        db.query(models.Report)
-        .filter(models.Report.id == report_id, models.Report.user_id == user_id)
-        .first()
-    )
+def get_report_detail(db: Session, user_id: int | None, report_id: int) -> ReportDetailResponse | None:
+    query = db.query(models.Report).filter(models.Report.id == report_id)
+    if user_id is not None:
+        query = query.filter(models.Report.user_id == user_id)
+    report = query.first()
     if report is None:
         return None
     return _report_detail(db, report)
@@ -73,12 +90,15 @@ def _get_owned_analyses(
     db: Session,
     user_id: int,
     analysis_ids: list[int],
+    department_id: int,
 ) -> list[models.DataAnalysis]:
     records = (
         db.query(models.DataAnalysis)
+        .join(models.Dataset, models.Dataset.id == models.DataAnalysis.dataset_id)
         .filter(
             models.DataAnalysis.user_id == user_id,
             models.DataAnalysis.id.in_(analysis_ids),
+            models.Dataset.department_id == department_id,
         )
         .all()
     )

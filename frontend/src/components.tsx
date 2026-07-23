@@ -1,6 +1,7 @@
-import { BarChart3, FileSpreadsheet, FileText, LayoutDashboard, LogOut, Upload, X } from "lucide-react";
+import { BarChart3, FileSpreadsheet, FileText, LayoutDashboard, LogOut, Upload, Users, X } from "lucide-react";
 import { Link, NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "./auth";
+import { useDepartment } from "./department";
 import { Bar, BarChart, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { ChartPayload, SurveyResearchChart } from "./types";
 
@@ -8,13 +9,15 @@ const CHART_COLORS = ["#168a7a", "#447fba", "#e0a13d", "#c9665c", "#8a6cb5", "#5
 
 export function AppShell() {
   const { user, signOut } = useAuth();
+  const { selected, departments, select } = useDepartment();
   const location = useLocation();
-  const nav = [
+  const analystNav = [
     { to: "/upload", label: "Yukle", icon: Upload },
     { to: "/datasets", label: "Veri setleri", icon: FileSpreadsheet },
     { to: "/analyses", label: "Analizler", icon: BarChart3 },
     { to: "/reports", label: "Raporlar", icon: FileText },
   ];
+  const nav = user?.role === "admin" ? [{ to: "/admin", label: "Veri analistleri", icon: Users }] : analystNav;
 
   return <div className="app-frame">
     <aside className="sidebar">
@@ -24,6 +27,7 @@ export function AppShell() {
           <Icon size={18} /><span>{label}</span>
         </NavLink>)}
       </nav>
+      {user?.role === "analyst" && <label className="department-switcher">Mudurluk<select value={selected?.id ?? ""} onChange={(event) => select(departments.find((item) => item.id === Number(event.target.value)) ?? null)}><option value="">Secin</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
       <div className="sidebar-footer">
         <span className="account-email" title={user?.email}>{user?.email}</span>
         <button className="icon-button" onClick={signOut} title="Cikis yap" aria-label="Cikis yap"><LogOut size={18} /></button>
@@ -34,9 +38,21 @@ export function AppShell() {
 }
 
 export function RequireAuth() {
-  const { token, ready } = useAuth();
+  const { token, ready, user } = useAuth();
   if (!ready) return <div className="loading-screen">Oturum kontrol ediliyor...</div>;
-  return token ? <AppShell /> : <Navigate to="/login" replace />;
+  if (!token) return <Navigate to="/login" replace />;
+  if (user?.role === "admin" && user.must_change_password) return <Navigate to="/change-password" replace />;
+  return <AppShell />;
+}
+
+export function RequireAnalyst() {
+  const { user } = useAuth();
+  return user?.role === "analyst" ? <Outlet /> : <Navigate to="/admin" replace />;
+}
+
+export function RequireAdmin() {
+  const { user } = useAuth();
+  return user?.role === "admin" ? <Outlet /> : <Navigate to="/datasets" replace />;
 }
 
 export function PageHeader({ title, detail, actions }: { title: string; detail: string; actions?: React.ReactNode }) {

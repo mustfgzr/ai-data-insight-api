@@ -27,10 +27,14 @@ def save_parsed_survey(
     source_content: bytes | None = None,
     content_type: str | None = None,
     dataset: models.Dataset | None = None,
+    department_id: int | None = None,
 ) -> SurveyUploadResponse:
     if dataset is None:
+        if department_id is None:
+            raise ValueError("Survey kaydi icin mudurluk zorunludur")
         dataset = models.Dataset(
             user_id=user_id,
+            department_id=department_id,
             filename=parsed.filename,
             original_filename=parsed.filename,
             file_type=parsed.file_type,
@@ -41,6 +45,8 @@ def save_parsed_survey(
         db.add(dataset)
         db.flush()
     else:
+        if dataset.user_id != user_id:
+            raise ValueError("Survey dataset sahibiyle uyusmuyor")
         _replace_dataset_contents(db, dataset, parsed)
 
     if source_content is not None and dataset is not None:
@@ -211,12 +217,11 @@ def _replace_dataset_contents(
     db.flush()
 
 
-def get_survey_detail(db: Session, user_id: int, survey_id: int) -> SurveyDetailResponse | None:
-    survey = (
-        db.query(models.Survey)
-        .filter(models.Survey.id == survey_id, models.Survey.user_id == user_id)
-        .first()
-    )
+def get_survey_detail(db: Session, user_id: int | None, survey_id: int) -> SurveyDetailResponse | None:
+    query = db.query(models.Survey).filter(models.Survey.id == survey_id)
+    if user_id is not None:
+        query = query.filter(models.Survey.user_id == user_id)
+    survey = query.first()
     if survey is None:
         return None
 

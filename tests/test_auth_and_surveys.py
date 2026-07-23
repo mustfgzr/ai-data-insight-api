@@ -14,6 +14,7 @@ from database import Base, SessionLocal, engine
 import models  # noqa: F401
 from main import app
 import ai_analyst
+from admin_bootstrap import bootstrap_admin
 
 
 client = TestClient(app)
@@ -32,7 +33,7 @@ def _auth_headers(email: str = "survey@example.com") -> dict[str, str]:
     password = "strong-password"
     register_response = client.post(
         "/register",
-        json={"email": email, "password": password},
+        json={"full_name": "Test Analisti", "email": email, "password": password},
     )
     assert register_response.status_code == 201
     assert register_response.json()["email"] == email
@@ -46,6 +47,12 @@ def _auth_headers(email: str = "survey@example.com") -> dict[str, str]:
     assert body["token_type"] == "bearer"
     assert body["access_token"]
     return {"Authorization": f"Bearer {body['access_token']}"}
+
+
+def _department_id(headers: dict[str, str], name: str = "Test Mudurlugu") -> int:
+    response = client.post("/departments", headers=headers, json={"name": name})
+    assert response.status_code in (200, 201)
+    return response.json()["id"]
 
 
 def test_saved_report_generator_uses_a_live_gemini_client(monkeypatch):
@@ -85,16 +92,16 @@ def test_saved_report_generator_uses_a_live_gemini_client(monkeypatch):
 
 def test_register_rejects_duplicate_email():
     email = "duplicate@example.com"
-    response = client.post("/register", json={"email": email, "password": "secret-123"})
+    response = client.post("/register", json={"full_name": "Duplicate User", "email": email, "password": "secret-123"})
     assert response.status_code == 201
 
-    duplicate = client.post("/register", json={"email": email, "password": "secret-123"})
+    duplicate = client.post("/register", json={"full_name": "Duplicate User", "email": email, "password": "secret-123"})
     assert duplicate.status_code == 400
 
 
 def test_login_rejects_wrong_password():
     email = "wrong-password@example.com"
-    client.post("/register", json={"email": email, "password": "correct-123"})
+    client.post("/register", json={"full_name": "Wrong Password", "email": email, "password": "correct-123"})
 
     response = client.post("/login", json={"email": email, "password": "wrong-123"})
     assert response.status_code == 401
@@ -104,7 +111,7 @@ def test_auth_normalizes_email_and_returns_current_user():
     email = "normalization@example.com"
     response = client.post(
         "/register",
-        json={"email": "  NORMALIZATION@EXAMPLE.COM ", "password": "strong-password"},
+        json={"full_name": "Normalization User", "email": "  NORMALIZATION@EXAMPLE.COM ", "password": "strong-password"},
     )
     assert response.status_code == 201
     assert response.json()["email"] == email
@@ -122,13 +129,13 @@ def test_auth_normalizes_email_and_returns_current_user():
 def test_auth_rejects_invalid_credentials_and_missing_token():
     invalid_email = client.post(
         "/register",
-        json={"email": "invalid-email", "password": "strong-password"},
+        json={"full_name": "Invalid User", "email": "invalid-email", "password": "strong-password"},
     )
     assert invalid_email.status_code == 422
 
     short_password = client.post(
         "/register",
-        json={"email": "short-password@example.com", "password": "short"},
+        json={"full_name": "Short Password", "email": "short-password@example.com", "password": "short"},
     )
     assert short_password.status_code == 422
 
@@ -155,6 +162,7 @@ def test_upload_general_dataset_saves_source_metadata_and_analysis():
     response = client.post(
         "/datasets/upload",
         headers=headers,
+        data={"department_id": str(_department_id(headers))},
         files={"file": ("scores.csv", csv_content, "text/csv")},
     )
 
@@ -197,6 +205,7 @@ def test_upload_general_xlsx_dataset():
     response = client.post(
         "/datasets/upload",
         headers=headers,
+        data={"department_id": str(_department_id(headers))},
         files={
             "file": (
                 "scores.xlsx",
@@ -219,6 +228,7 @@ def test_dataset_and_analysis_history_are_paginated_and_user_scoped():
     upload = client.post(
         "/datasets/upload",
         headers=headers,
+        data={"department_id": str(_department_id(headers))},
         files={"file": ("history.csv", csv_content, "text/csv")},
     )
     assert upload.status_code == 201
@@ -248,7 +258,7 @@ def test_dataset_and_analysis_history_are_paginated_and_user_scoped():
 
     analyses = client.get("/analyses", headers=headers)
     assert analyses.status_code == 200
-    assert any(item["id"] == uploaded["analysis_id"] for item in analyses.json())
+    assert any(item["id"] == uploaded["analysis_id"] for item in analyses.json()["items"])
 
     analysis = client.get(f"/analyses/{uploaded['analysis_id']}", headers=headers)
     assert analysis.status_code == 200
@@ -267,6 +277,7 @@ def test_reports_are_created_from_owned_analyses_and_persisted(monkeypatch):
         response = client.post(
             "/datasets/upload",
             headers=headers,
+        data={"department_id": str(_department_id(headers))},
             files={"file": (filename, content, "text/csv")},
         )
         assert response.status_code == 201
@@ -286,6 +297,7 @@ def test_reports_are_created_from_owned_analyses_and_persisted(monkeypatch):
         headers=headers,
         json={
             "analysis_ids": [first["analysis_id"], second["analysis_id"]],
+            "department_id": first["department_id"],
             "title": "Karsilastirma raporu",
             "question": "Skor farklarini acikla",
         },
@@ -300,7 +312,7 @@ def test_reports_are_created_from_owned_analyses_and_persisted(monkeypatch):
 
     reports = client.get("/reports", headers=headers)
     assert reports.status_code == 200
-    assert any(item["id"] == report["id"] for item in reports.json())
+    assert any(item["id"] == report["id"] for item in reports.json()["items"])
 
     detail = client.get(f"/reports/{report['id']}", headers=headers)
     assert detail.status_code == 200
@@ -309,7 +321,7 @@ def test_reports_are_created_from_owned_analyses_and_persisted(monkeypatch):
     duplicate_selection = client.post(
         "/reports",
         headers=headers,
-        json={"analysis_ids": [first["analysis_id"], first["analysis_id"]]},
+        json={"analysis_ids": [first["analysis_id"], first["analysis_id"]], "department_id": first["department_id"]},
     )
     assert duplicate_selection.status_code == 422
 
@@ -318,7 +330,7 @@ def test_reports_are_created_from_owned_analyses_and_persisted(monkeypatch):
     forbidden_analysis = client.post(
         "/reports",
         headers=other_headers,
-        json={"analysis_ids": [first["analysis_id"]]},
+        json={"analysis_ids": [first["analysis_id"]], "department_id": first["department_id"]},
     )
     assert forbidden_analysis.status_code == 404
 
@@ -328,6 +340,7 @@ def test_report_generation_failure_is_saved(monkeypatch):
     upload = client.post(
         "/datasets/upload",
         headers=headers,
+        data={"department_id": str(_department_id(headers))},
         files={"file": ("failure.csv", b"id,score\n1,10\n2,20\n", "text/csv")},
     )
     assert upload.status_code == 201
@@ -339,13 +352,13 @@ def test_report_generation_failure_is_saved(monkeypatch):
     response = client.post(
         "/reports",
         headers=headers,
-        json={"analysis_ids": [upload.json()["analysis_id"]]},
+        json={"analysis_ids": [upload.json()["analysis_id"]], "department_id": upload.json()["department_id"]},
     )
     assert response.status_code == 502
 
     reports = client.get("/reports", headers=headers)
     assert reports.status_code == 200
-    assert reports.json()[0]["status"] == "failed"
+    assert reports.json()["items"][0]["status"] == "failed"
 
 
 def test_upload_dataset_detects_survey_and_returns_survey_summary():
@@ -363,6 +376,7 @@ def test_upload_dataset_detects_survey_and_returns_survey_summary():
     response = client.post(
         "/datasets/upload",
         headers=headers,
+        data={"department_id": str(_department_id(headers))},
         files={"file": ("survey.csv", csv_content, "text/csv")},
     )
 
@@ -394,6 +408,7 @@ def test_survey_research_builds_dynamic_question_scores_and_demographics(monkeyp
     upload = client.post(
         "/datasets/upload",
         headers=headers,
+        data={"department_id": str(_department_id(headers))},
         files={"file": ("research-survey.csv", csv_content, "text/csv")},
     )
 
@@ -445,6 +460,7 @@ def test_upload_dataset_rejects_unsupported_file_type():
     response = client.post(
         "/datasets/upload",
         headers=headers,
+        data={"department_id": str(_department_id(headers))},
         files={"file": ("dataset.txt", b"hello", "text/plain")},
     )
     assert response.status_code == 400
@@ -456,6 +472,7 @@ def test_dataset_id_creates_multiple_independent_analyses(monkeypatch):
     upload = client.post(
         "/datasets/upload",
         headers=headers,
+        data={"department_id": str(_department_id(headers))},
         files={"file": ("scores.csv", b"city,score\nAnkara,10\nIzmir,20\n", "text/csv")},
     )
     assert upload.status_code == 201
@@ -485,6 +502,7 @@ def test_dataset_id_analysis_is_user_scoped():
     upload = client.post(
         "/datasets/upload",
         headers=owner_headers,
+        data={"department_id": str(_department_id(owner_headers))},
         files={"file": ("scores.csv", b"city,score\nAnkara,10\n", "text/csv")},
     )
     assert upload.status_code == 201
@@ -512,6 +530,7 @@ def test_survey_detection_reuses_uploaded_dataset_and_is_idempotent():
     upload = client.post(
         "/datasets/upload",
         headers=headers,
+        data={"department_id": str(_department_id(headers))},
         files={"file": ("survey.csv", csv_content, "text/csv")},
     )
     assert upload.status_code == 201
@@ -529,6 +548,7 @@ def test_survey_detection_handles_non_survey_and_missing_source_file():
     upload = client.post(
         "/datasets/upload",
         headers=headers,
+        data={"department_id": str(_department_id(headers))},
         files={"file": ("general.csv", b"city,score\nAnkara,10\nIzmir,20\n", "text/csv")},
     )
     assert upload.status_code == 201
@@ -558,6 +578,7 @@ def test_dataset_comparison_uses_existing_dataset_ids(monkeypatch):
         response = client.post(
             "/datasets/upload",
             headers=headers,
+        data={"department_id": str(_department_id(headers))},
             files={"file": (filename, content, "text/csv")},
         )
         assert response.status_code == 201
@@ -682,6 +703,7 @@ def test_upload_survey_csv_returns_dataset_questions_quality_and_summary():
     response = client.post(
         "/surveys/upload",
         headers=headers,
+        data={"department_id": str(_department_id(headers))},
         files={"file": ("survey.csv", csv_content, "text/csv")},
     )
 
@@ -717,6 +739,81 @@ def test_upload_survey_rejects_unsupported_file_type():
     response = client.post(
         "/surveys/upload",
         headers=headers,
+        data={"department_id": str(_department_id(headers))},
         files={"file": ("survey.txt", b"hello", "text/plain")},
     )
     assert response.status_code == 400
+
+
+def test_roles_departments_and_administrative_read_access(monkeypatch):
+    missing_name = client.post("/register", json={"email": "missing-name@example.com", "password": "strong-password"})
+    assert missing_name.status_code == 422
+    rejected_role = client.post(
+        "/register",
+        json={"full_name": "Role Attempt", "email": "role-attempt@example.com", "password": "strong-password", "role": "admin"},
+    )
+    assert rejected_role.status_code == 422
+
+    analyst_a = _auth_headers("analyst-a@example.com")
+    analyst_b = _auth_headers("analyst-b@example.com")
+    first_department = client.post("/departments", headers=analyst_a, json={"name": "Fen Isleri"})
+    assert first_department.status_code == 201
+    same_department = client.post("/departments", headers=analyst_b, json={"name": " fen isleri "})
+    assert same_department.status_code == 200
+    department_id = first_department.json()["id"]
+    assert same_department.json()["id"] == department_id
+
+    upload = client.post(
+        "/datasets/upload",
+        headers=analyst_a,
+        data={"department_id": str(department_id)},
+        files={"file": ("admin-scope.csv", b"city,score\nAnkara,10\n", "text/csv")},
+    )
+    assert upload.status_code == 201
+    dataset_id = upload.json()["dataset_id"]
+    analysis_id = upload.json()["analysis_id"]
+    assert client.get(f"/datasets/{dataset_id}", headers=analyst_b).status_code == 404
+    assert client.post(f"/datasets/{dataset_id}/analyses", headers=analyst_b, json={}).status_code == 404
+    assert client.post(
+        "/reports",
+        headers=analyst_b,
+        json={"analysis_ids": [analysis_id], "department_id": department_id},
+    ).status_code == 404
+
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_FULL_NAME", "Test Manager")
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAIL", "manager@example.com")
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_PASSWORD", "manager-password")
+    db = SessionLocal()
+    try:
+        admin, created = bootstrap_admin(db)
+        assert created is True
+        assert admin.role == "admin"
+        assert admin.hashed_password != "manager-password"
+        _same_admin, created_again = bootstrap_admin(db)
+        assert created_again is False
+    finally:
+        db.close()
+
+    login = client.post("/login", json={"email": "manager@example.com", "password": "manager-password"})
+    admin_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    changed = client.post(
+        "/users/me/password",
+        headers=admin_headers,
+        json={"current_password": "manager-password", "new_password": "manager-password-new"},
+    )
+    assert changed.status_code == 200
+    admin_headers = {"Authorization": f"Bearer {client.post('/login', json={'email': 'manager@example.com', 'password': 'manager-password-new'}).json()['access_token']}"}
+    analysts = client.get("/admin/analysts", headers=admin_headers)
+    assert analysts.status_code == 200
+    assert {item["email"] for item in analysts.json()["items"]}.issuperset({"analyst-a@example.com", "analyst-b@example.com"})
+    analyst_a_id = next(item["id"] for item in analysts.json()["items"] if item["email"] == "analyst-a@example.com")
+    admin_datasets = client.get(f"/admin/analysts/{analyst_a_id}/datasets?department_id={department_id}", headers=admin_headers)
+    assert admin_datasets.status_code == 200
+    assert any(item["id"] == dataset_id for item in admin_datasets.json()["items"])
+    assert client.post(
+        "/datasets/upload",
+        headers=admin_headers,
+        data={"department_id": str(department_id)},
+        files={"file": ("forbidden.csv", b"x\n1\n", "text/csv")},
+    ).status_code == 403
+    assert client.post("/reports", headers=admin_headers, json={"analysis_ids": [analysis_id], "department_id": department_id}).status_code == 403

@@ -1,4 +1,8 @@
-export type User = { id: number; email: string };
+export type User = { id: number; email: string; full_name?: string | null; role: "analyst" | "admin"; must_change_password: boolean };
+export type Department = { id: number; name: string; created_at?: string };
+export type Paged<T> = { items: T[]; offset: number; limit: number; total: number };
+export type AdminAnalyst = { id: number; full_name?: string | null; email: string; department_count?: number; dataset_count?: number; analysis_count?: number; report_count?: number };
+export type SurveyListItem = { id: number; dataset_id: number; title: string; department?: string | null; period?: string | null; quarter?: string | null; year?: number | null; created_at?: string };
 
 export type ColumnMetadata = {
   name: string;
@@ -19,6 +23,8 @@ export type DatasetListItem = {
   detected_format: string;
   row_count: number;
   column_count: number;
+  department_id: number;
+  department_name?: string | null;
   created_at?: string;
 };
 
@@ -97,6 +103,7 @@ export type SurveyResearch = {
 export type DatasetUpload = {
   dataset_id: number;
   analysis_id: number;
+  department_id: number;
   survey_id?: number | null;
   filename: string;
   detected_format: string;

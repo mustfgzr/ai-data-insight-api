@@ -9,6 +9,8 @@ class UserCredentials(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=128)
 
+    model_config = ConfigDict(extra="forbid")
+
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: str) -> str:
@@ -19,7 +21,15 @@ class UserCredentials(BaseModel):
 
 
 class UserCreate(UserCredentials):
-    pass
+    full_name: str = Field(min_length=3, max_length=160)
+
+    @field_validator("full_name")
+    @classmethod
+    def normalize_full_name(cls, value: str) -> str:
+        full_name = " ".join(value.split())
+        if len(full_name) < 3:
+            raise ValueError("Ad soyad en az 3 karakter olmalidir")
+        return full_name
 
 
 class UserLogin(UserCredentials):
@@ -29,6 +39,9 @@ class UserLogin(UserCredentials):
 class UserResponse(BaseModel):
     id: int
     email: str
+    full_name: Optional[str] = None
+    role: str
+    must_change_password: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -37,6 +50,57 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     expires_in: int
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DepartmentCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+
+
+class DepartmentItem(BaseModel):
+    id: int
+    name: str
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DepartmentCreateResponse(DepartmentItem):
+    created: bool
+
+
+class DepartmentListResponse(BaseModel):
+    offset: int
+    limit: int
+    total: int
+    items: list[DepartmentItem] = Field(default_factory=list)
+
+
+class AdminAnalystItem(BaseModel):
+    id: int
+    full_name: Optional[str] = None
+    email: str
+    created_at: Optional[datetime] = None
+
+
+class AdminAnalystListResponse(BaseModel):
+    offset: int
+    limit: int
+    total: int
+    items: list[AdminAnalystItem] = Field(default_factory=list)
+
+
+class AdminAnalystDetail(AdminAnalystItem):
+    department_count: int = 0
+    dataset_count: int = 0
+    analysis_count: int = 0
+    report_count: int = 0
 
 
 class AnalysisResponse(BaseModel):
@@ -205,6 +269,7 @@ class SurveyUploadResponse(BaseModel):
 class DatasetUploadResponse(BaseModel):
     dataset_id: int
     analysis_id: int
+    department_id: int
     survey_id: Optional[int] = None
     filename: str
     detected_format: str
@@ -226,6 +291,8 @@ class DatasetListItem(BaseModel):
     detected_format: str
     row_count: int
     column_count: int
+    department_id: int
+    department_name: Optional[str] = None
     created_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -285,6 +352,7 @@ class SurveyDetectionResponse(BaseModel):
 
 class ReportCreate(BaseModel):
     analysis_ids: list[int] = Field(min_length=1, max_length=5)
+    department_id: int = Field(gt=0)
     title: Optional[str] = Field(default=None, max_length=160)
     question: Optional[str] = Field(default=None, max_length=2_000)
 
@@ -310,6 +378,20 @@ class ReportDetailResponse(ReportListItem):
     model_name: Optional[str] = None
 
 
+class AnalysisListResponse(BaseModel):
+    offset: int
+    limit: int
+    total: int
+    items: list[DataAnalysisListItem] = Field(default_factory=list)
+
+
+class ReportListResponse(BaseModel):
+    offset: int
+    limit: int
+    total: int
+    items: list[ReportListItem] = Field(default_factory=list)
+
+
 class SurveyListItem(BaseModel):
     id: int
     dataset_id: int
@@ -321,6 +403,13 @@ class SurveyListItem(BaseModel):
     created_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SurveyListResponse(BaseModel):
+    offset: int
+    limit: int
+    total: int
+    items: list[SurveyListItem] = Field(default_factory=list)
 
 
 class SurveyDetailResponse(BaseModel):

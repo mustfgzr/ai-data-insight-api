@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.sql import func
 from database import Base
 
@@ -8,6 +8,9 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
+    full_name = Column(String, nullable=True)
+    role = Column(String, nullable=False, default="analyst", server_default="analyst")
+    must_change_password = Column(Boolean, nullable=False, default=False, server_default="0")
     hashed_password = Column(String, nullable=False)
 
 
@@ -44,11 +47,27 @@ class DataAnalysis(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class Department(Base):
+    __tablename__ = "departments"
+    __table_args__ = (
+        UniqueConstraint("name_key", name="uq_departments_name_key"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    name_key = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class Dataset(Base):
     __tablename__ = "datasets"
+    __table_args__ = (
+        Index("ix_datasets_user_department", "user_id", "department_id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=False, index=True)
     filename = Column(String, nullable=False)
     original_filename = Column(String, nullable=False)
     file_type = Column(String, nullable=False)

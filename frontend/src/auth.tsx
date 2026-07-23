@@ -6,8 +6,9 @@ type AuthContextValue = {
   token: string | null;
   user: User | null;
   ready: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<User>;
+  register: (fullName: string, email: string, password: string) => Promise<User>;
+  updateUser: (user: User) => void;
   signOut: () => void;
 };
 
@@ -35,6 +36,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const result = await api.login(email, password);
     sessionStorage.setItem(TOKEN_KEY, result.access_token);
     setToken(result.access_token);
+    const currentUser = await api.me(result.access_token);
+    setUser(currentUser);
+    return currentUser;
   };
 
   const value = useMemo<AuthContextValue>(() => ({
@@ -42,10 +46,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     ready,
     signIn: saveSession,
-    register: async (email, password) => {
-      await api.register(email, password);
-      await saveSession(email, password);
+    register: async (fullName, email, password) => {
+      await api.register(fullName, email, password);
+      return saveSession(email, password);
     },
+    updateUser: setUser,
     signOut: () => {
       sessionStorage.removeItem(TOKEN_KEY);
       setToken(null);

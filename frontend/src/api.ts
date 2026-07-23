@@ -1,13 +1,17 @@
 import type {
   AnalysisDetail,
   AnalysisListItem,
+  AdminAnalyst,
+  Department,
   DatasetDetail,
   DatasetListItem,
   DatasetRows,
   DatasetUpload,
+  Paged,
   ReportDetail,
   ReportListItem,
   SurveyDetection,
+  SurveyListItem,
   SurveyResearch,
   User,
 } from "./types";
@@ -41,20 +45,25 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
 }
 
 export const api = {
-  register: (email: string, password: string) =>
-    request<User>("/register", { method: "POST", body: JSON.stringify({ email, password }) }),
+  register: (full_name: string, email: string, password: string) =>
+    request<User>("/register", { method: "POST", body: JSON.stringify({ full_name, email, password }) }),
   login: (email: string, password: string) =>
     request<{ access_token: string; token_type: string; expires_in: number }>("/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
   me: (token: string) => request<User>("/users/me", {}, token),
-  uploadDataset: (file: File, token: string) => {
+  changePassword: (current_password: string, new_password: string, token: string) =>
+    request<User>("/users/me/password", { method: "POST", body: JSON.stringify({ current_password, new_password }) }, token),
+  departments: (token: string) => request<Paged<Department>>("/departments?offset=0&limit=100", {}, token),
+  createDepartment: (name: string, token: string) => request<Department & { created: boolean }>("/departments", { method: "POST", body: JSON.stringify({ name }) }, token),
+  uploadDataset: (file: File, departmentId: number, token: string) => {
     const form = new FormData();
     form.append("file", file);
+    form.append("department_id", String(departmentId));
     return request<DatasetUpload>("/datasets/upload", { method: "POST", body: form }, token);
   },
-  datasets: (token: string) => request<{ items: DatasetListItem[]; total: number }>("/datasets", {}, token),
+  datasets: (departmentId: number, token: string) => request<Paged<DatasetListItem>>(`/datasets?department_id=${departmentId}&offset=0&limit=50`, {}, token),
   dataset: (id: number, token: string) => request<DatasetDetail>(`/datasets/${id}`, {}, token),
   datasetRows: (id: number, offset: number, token: string) =>
     request<DatasetRows>(`/datasets/${id}/rows?offset=${offset}&limit=50`, {}, token),
@@ -68,10 +77,17 @@ export const api = {
     request<SurveyResearch>(`/surveys/${id}/research/refresh`, { method: "POST" }, token),
   createSurveyAiSummary: (id: number, token: string) =>
     request<SurveyResearch>(`/surveys/${id}/research/ai-summary`, { method: "POST" }, token),
-  analyses: (token: string) => request<AnalysisListItem[]>("/analyses", {}, token),
+  analyses: (departmentId: number, token: string) => request<Paged<AnalysisListItem>>(`/analyses?department_id=${departmentId}&offset=0&limit=50`, {}, token),
   analysis: (id: number, token: string) => request<AnalysisDetail>(`/analyses/${id}`, {}, token),
-  reports: (token: string) => request<ReportListItem[]>("/reports", {}, token),
+  reports: (departmentId: number, token: string) => request<Paged<ReportListItem>>(`/reports?department_id=${departmentId}&offset=0&limit=50`, {}, token),
   report: (id: number, token: string) => request<ReportDetail>(`/reports/${id}`, {}, token),
-  createReport: (payload: { analysis_ids: number[]; title?: string; question?: string }, token: string) =>
+  createReport: (payload: { analysis_ids: number[]; department_id: number; title?: string; question?: string }, token: string) =>
     request<ReportDetail>("/reports", { method: "POST", body: JSON.stringify(payload) }, token),
+  adminAnalysts: (token: string) => request<Paged<AdminAnalyst>>("/admin/analysts?offset=0&limit=100", {}, token),
+  adminAnalyst: (id: number, token: string) => request<AdminAnalyst>(`/admin/analysts/${id}`, {}, token),
+  adminDepartments: (id: number, token: string) => request<Paged<Department>>(`/admin/analysts/${id}/departments?offset=0&limit=100`, {}, token),
+  adminDatasets: (id: number, departmentId: number, token: string) => request<Paged<DatasetListItem>>(`/admin/analysts/${id}/datasets?department_id=${departmentId}&offset=0&limit=50`, {}, token),
+  adminAnalyses: (id: number, departmentId: number, token: string) => request<Paged<AnalysisListItem>>(`/admin/analysts/${id}/analyses?department_id=${departmentId}&offset=0&limit=50`, {}, token),
+  adminReports: (id: number, departmentId: number, token: string) => request<Paged<ReportListItem>>(`/admin/analysts/${id}/reports?department_id=${departmentId}&offset=0&limit=50`, {}, token),
+  adminSurveys: (id: number, departmentId: number, token: string) => request<Paged<SurveyListItem>>(`/admin/analysts/${id}/surveys?department_id=${departmentId}&offset=0&limit=50`, {}, token),
 };

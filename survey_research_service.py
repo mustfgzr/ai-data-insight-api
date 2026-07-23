@@ -33,7 +33,7 @@ AGE_BANDS = (
 
 def get_survey_research(
     db: Session,
-    user_id: int,
+    user_id: int | None,
     survey_id: int,
 ) -> SurveyResearchResponse:
     survey = _get_owned_survey(db, user_id, survey_id)
@@ -204,12 +204,11 @@ def build_and_save_survey_research(
     return report
 
 
-def _get_owned_survey(db: Session, user_id: int, survey_id: int) -> models.Survey:
-    survey = (
-        db.query(models.Survey)
-        .filter(models.Survey.id == survey_id, models.Survey.user_id == user_id)
-        .first()
-    )
+def _get_owned_survey(db: Session, user_id: int | None, survey_id: int) -> models.Survey:
+    query = db.query(models.Survey).filter(models.Survey.id == survey_id)
+    if user_id is not None:
+        query = query.filter(models.Survey.user_id == user_id)
+    survey = query.first()
     if survey is None:
         raise HTTPException(status_code=404, detail="Anket bulunamadı")
     return survey
